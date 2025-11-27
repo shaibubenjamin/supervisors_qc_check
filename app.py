@@ -1,5 +1,5 @@
 # ================================
-# SARMAAN II UPDATED QC DASHBOARD
+# SARMAAN II UPDATED QC DASHBOARD (RESPONSIVE + FORCE REFRESH)
 # ================================
 
 from datetime import date
@@ -11,12 +11,12 @@ from io import BytesIO
 
 # ---------------- CONFIG ----------------
 st.set_page_config(
-    page_title="SARMAAN II QC Dashboard (Updated)",
+    page_title="SARMAAN II QC Dashboard (Responsive)",
     layout="wide"
 )
 
 # ---------------- DATA SOURCE ----------------
-DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aQf64ZqUcEnd5CbjbwFoyH/export-settings/es8Rs2mMYeRPbLSzKBv8L9r/data.xlsx"
+DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aLJKVSdGWdGybZznuKXFCM/export-settings/esyo5XY29VoLgyLsGRg4mNz/data.xlsx"
 
 MAIN_SHEET = "SARMAAN II Mortality form- D..."
 FEMALES_SHEET = "females"
@@ -40,7 +40,7 @@ def load_data():
         st.error(f"Error loading workbook: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-
+# ---------------- LOAD DATA ----------------
 df_mortality, df_females, df_preg = load_data()
 if df_females.empty:
     st.stop()
@@ -56,7 +56,6 @@ def find_column_with_suffix(df, keyword):
 # UPDATED QC ENGINE
 # ================================
 def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
-
     outcome_col = find_column_with_suffix(df_preg_history, "Was the baby born alive")
     still_alive_col = find_column_with_suffix(df_preg_history, "still alive")
     boys_dead_col = find_column_with_suffix(df_females, "boys have died")
@@ -75,7 +74,6 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
         boys_dead_col: 'sum',
         girls_dead_col: 'sum'
     }).reset_index()
-
     females_agg['total_children_died'] = females_agg[boys_dead_col] + females_agg[girls_dead_col]
 
     # ================================
@@ -102,13 +100,10 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
 
         if row[c_alive_col] != row['Born_Alive']:
             errors.append("Born Alive mismatch")
-
         if row[miscarriage_col] != row['Miscarriage_Abortion']:
             errors.append("Miscarrage mismatch")
-
         if row[c_dead_col] != row['Born_Dead']:
             errors.append("Born Dead mismatch")
-
         if row['total_children_died'] != row['Later_Died']:
             errors.append("Children Born Alive Later Died Mismatch")
 
@@ -125,14 +120,12 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     # MAP ENUMERATOR
     # ================================
     ra_col = find_column_with_suffix(df_mortality, "Type in your Name")
-
     qc_df = qc_df.merge(
         df_mortality[["_uuid", ra_col]],
         left_on="_submission__uuid",
         right_on="_uuid",
         how="left"
     ).rename(columns={ra_col: "Research_Assistant"})
-
     qc_df.drop(columns=["_uuid"], inplace=True, errors='ignore')
     qc_df["Error_Percentage"] = (qc_df["Total_Flags"] / 4) * 100
 
@@ -154,6 +147,11 @@ DATE_COL = "start"
 
 # ---------------- SIDEBAR FILTERS ----------------
 st.sidebar.header("🔎 Filter Controls")
+
+# Force refresh button
+if st.sidebar.button("🔄 Force Refresh Data"):
+    st.cache_data.clear()
+    st.success("Data cache cleared! Interact with any filter to reload.")
 
 # LGA filter
 selected_lga = st.sidebar.selectbox("Confirm your LGA", ["All"] + sorted(df_mortality[LGA_COL].dropna().unique()))
@@ -194,37 +192,36 @@ filtered_df = df_qc[df_qc['_submission__uuid'].isin(filtered_final['_uuid'])]
 
 # ---------------- KPI CARDS ----------------
 st.title("📊 SARMAAN II - Updated QC Dashboard")
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total Households Reached", filtered_final['_uuid'].nunique())
-col2.metric("Active Enumerators", filtered_final[RA_COL].nunique())
-col3.metric("Wards Reached", filtered_final[WARD_COL].nunique())
-col4.metric("Communities Reached", filtered_final[COMMUNITY_COL].nunique())
+kpi_values = [
+    ("Total Households Reached", filtered_final['_uuid'].nunique()),
+    ("Active Enumerators", filtered_final[RA_COL].nunique()),
+    ("Wards Reached", filtered_final[WARD_COL].nunique()),
+    ("Communities Reached", filtered_final[COMMUNITY_COL].nunique())
+]
+cols = st.columns(len(kpi_values))
+for col, (label, value) in zip(cols, kpi_values):
+    col.metric(label, value)
 st.markdown("---")
 
 # ---------------- QC CARDS ----------------
 st.subheader("🚨 QC Summary")
-
-col_qc1, col_qc2, col_qc3, col_qc4, col_qc5, col_qc6 = st.columns(6)
-
-# Duplicate household, mother, child (filtered)
-filtered_uuids = filtered_final['_uuid'].unique()
-filtered_females = df_females[df_females['_submission__uuid'].isin(filtered_uuids)]
-filtered_preg = df_preg[df_preg['_submission__uuid'].isin(filtered_uuids)]
-
-col_qc1.metric("Duplicate Household", filtered_final.duplicated(subset="unique_code").sum())
-col_qc2.metric("Duplicate Mother", filtered_females.duplicated(subset="mother_id").sum())
-col_qc3.metric("Duplicate Child", filtered_preg.duplicated(subset="child_id").sum())
-
-# QC mismatch counts
-col_qc4.metric("Born Alive mismatch", (filtered_df["QC_Issues"].str.contains("Born Alive mismatch")).sum())
-col_qc5.metric("Born Dead mismatch", (filtered_df["QC_Issues"].str.contains("Born Dead mismatch")).sum())
-col_qc6.metric("Miscarrage mismatch", (filtered_df["QC_Issues"].str.contains("Miscarrage mismatch")).sum())
+qc_values = [
+    ("Duplicate Household", filtered_final.duplicated(subset="unique_code").sum()),
+    ("Duplicate Mother", df_females[df_females['_submission__uuid'].isin(filtered_final['_uuid'])].duplicated(subset="mother_id").sum()),
+    ("Duplicate Child", df_preg[df_preg['_submission__uuid'].isin(filtered_final['_uuid'])].duplicated(subset="child_id").sum()),
+    ("Born Alive mismatch", (filtered_df["QC_Issues"].str.contains("Born Alive mismatch")).sum()),
+    ("Born Dead mismatch", (filtered_df["QC_Issues"].str.contains("Born Dead mismatch")).sum()),
+    ("Miscarrage mismatch", (filtered_df["QC_Issues"].str.contains("Miscarrage mismatch")).sum())
+]
+cols = st.columns(len(qc_values))
+for col, (label, value) in zip(cols, qc_values):
+    col.metric(label, value)
 st.markdown("---")
 
 # ---------------- ERRORS BY ENUMERATOR ----------------
 st.subheader("📉 QC Errors by Enumerator")
 error_by_ra = filtered_df.groupby("Research_Assistant")['Total_Flags'].sum().reset_index()
-st.bar_chart(error_by_ra.set_index("Research_Assistant"))
+st.bar_chart(error_by_ra.set_index("Research_Assistant"), use_container_width=True)
 
 # ---------------- QC TABLE PER ENUMERATOR ----------------
 st.subheader("📋 QC Records and Errors per Enumerator")
@@ -238,6 +235,18 @@ st.dataframe(
     ]],
     use_container_width=True,
     height=500
+)
+
+# ---------------- RESPONSIVE CSS ----------------
+st.markdown(
+    """
+    <style>
+    .stDataFrame, .stTable {
+        width: 100% !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
 )
 
 st.success("✅ QC Dashboard Updated with Filters, KPIs & Error Analytics")
