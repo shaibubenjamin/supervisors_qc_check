@@ -197,7 +197,7 @@ def run_dashboard():
     cols[1].metric("Duplicate Mother", filtered_females.duplicated(subset="mother_id").sum())
     cols[2].metric("Duplicate Child", filtered_preg.duplicated(subset="child_id").sum())
     cols[3].metric("Born Alive mismatch", (filtered_df["QC_Issues"].str.contains("Born Alive mismatch")).sum())
-    cols[4].metric("Born Dead mismatch", (filtered_df["QC_Issues"].str.contains("Born Alive but Later Died mismatch")).sum())
+    cols[4].metric("B.Alive,later Died mismatch", (filtered_df["QC_Issues"].str.contains("Born Alive but Later Died mismatch")).sum())
     cols[5].metric("Miscarrage mismatch", (filtered_df["QC_Issues"].str.contains("Miscarrage mismatch")).sum())
     st.markdown("---")
 
