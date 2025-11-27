@@ -1,5 +1,5 @@
 # ================================
-# SARMAAN II UPDATED QC DASHBOARD (RESPONSIVE + FORCE REFRESH)
+# SARMAAN II UPDATED QC DASHBOARD (OPTIMIZED + FORCE REFRESH + DYNAMIC KPIs)
 # ================================
 
 from datetime import date
@@ -17,14 +17,13 @@ st.set_page_config(
 
 # ---------------- DATA SOURCE ----------------
 DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aLJKVSdGWdGybZznuKXFCM/export-settings/esyo5XY29VoLgyLsGRg4mNz/data.xlsx"
-
 MAIN_SHEET = "SARMAAN II Mortality form- D..."
 FEMALES_SHEET = "females"
 PREG_SHEET = "pregnancy_history"
 
 # ---------------- SAFE DATA LOADER ----------------
 @st.cache_data(show_spinner=True)
-def load_data():
+def load_data(force_reload=False):
     try:
         response = requests.get(DATA_URL, timeout=60)
         response.raise_for_status()
@@ -35,14 +34,32 @@ def load_data():
         df_females = data_dict[FEMALES_SHEET]
         df_preg = data_dict[PREG_SHEET]
 
+        # Ensure proper datetime for filtering
+        df_mortality["start"] = pd.to_datetime(df_mortality["start"], errors='coerce')
+
         return df_mortality, df_females, df_preg
     except Exception as e:
         st.error(f"Error loading workbook: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-# ---------------- LOAD DATA ----------------
-df_mortality, df_females, df_preg = load_data()
-if df_females.empty:
+# ---------------- SESSION STATE FOR FORCE REFRESH ----------------
+if 'force_refresh' not in st.session_state:
+    st.session_state.force_refresh = False
+
+st.sidebar.header("🔎 Filter Controls")
+
+if st.sidebar.button("🔄 Force Refresh Data"):
+    st.session_state.force_refresh = True
+
+# Load data with force refresh handling
+if st.session_state.force_refresh:
+    st.cache_data.clear()
+    df_mortality, df_females, df_preg = load_data(force_reload=True)
+    st.session_state.force_refresh = False
+else:
+    df_mortality, df_females, df_preg = load_data()
+
+if df_females.empty or df_mortality.empty or df_preg.empty:
     st.stop()
 
 # ---------------- HELPER ----------------
@@ -64,9 +81,7 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     c_dead_col = find_column_with_suffix(df_females, "c_dead")
     miscarriage_col = find_column_with_suffix(df_females, "misscarraige")
 
-    # ================================
-    # AGGREGATE FEMALES PER HOUSEHOLD
-    # ================================
+    # Aggregate females per household
     females_agg = df_females.groupby('_submission__uuid').agg({
         c_alive_col: 'sum',
         c_dead_col: 'sum',
@@ -76,24 +91,18 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     }).reset_index()
     females_agg['total_children_died'] = females_agg[boys_dead_col] + females_agg[girls_dead_col]
 
-    # ================================
-    # AGGREGATE PREGNANCY HISTORY
-    # ================================
+    # Aggregate pregnancy history
     preg_counts = df_preg_history.groupby('_submission__uuid').agg(
-        Born_Alive=(outcome_col, lambda x: (x == "Born Alive").sum()),
-        Miscarriage_Abortion=(outcome_col, lambda x: (x == "Miscarriage and Abortion").sum()),
-        Born_Dead=(outcome_col, lambda x: (x == "Born dead").sum()),
+        Born_Alive=(outcome_col, lambda x: (x == "Born Alive").sum() if outcome_col else 0),
+        Miscarriage_Abortion=(outcome_col, lambda x: (x == "Miscarriage and Abortion").sum() if outcome_col else 0),
+        Born_Dead=(outcome_col, lambda x: (x == "Born dead").sum() if outcome_col else 0),
         Later_Died=(still_alive_col, lambda x: (x == "No").sum() if still_alive_col else 0)
     ).reset_index()
 
-    # ================================
-    # MERGE
-    # ================================
+    # Merge
     merged = females_agg.merge(preg_counts, on="_submission__uuid", how="left").fillna(0)
 
-    # ================================
-    # QC LOGIC
-    # ================================
+    # QC logic
     qc_rows = []
     for _, row in merged.iterrows():
         errors = []
@@ -107,18 +116,15 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
         if row['total_children_died'] != row['Later_Died']:
             errors.append("Children Born Alive Later Died Mismatch")
 
-        if errors:
-            qc_rows.append({
-                "_submission__uuid": row['_submission__uuid'],
-                "QC_Issues": "; ".join(errors),
-                "Total_Flags": len(errors)
-            })
+        qc_rows.append({
+            "_submission__uuid": row['_submission__uuid'],
+            "QC_Issues": "; ".join(errors) if errors else "No Errors",
+            "Total_Flags": len(errors)
+        })
 
     qc_df = pd.DataFrame(qc_rows)
 
-    # ================================
-    # MAP ENUMERATOR
-    # ================================
+    # Map enumerator
     ra_col = find_column_with_suffix(df_mortality, "Type in your Name")
     qc_df = qc_df.merge(
         df_mortality[["_uuid", ra_col]],
@@ -131,91 +137,70 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
 
     return qc_df
 
-# ================================
-# RUN QC ENGINE
-# ================================
+# ---------------- RUN QC ENGINE ----------------
 df_qc = generate_qc_dataframe(df_mortality, df_females, df_preg)
 
-# ================================
-# COLUMN NAMES
-# ================================
+# ---------------- COLUMN NAMES ----------------
 LGA_COL = "Confirm your LGA"
 WARD_COL = "Confirm your ward"
 COMMUNITY_COL = "Confirm your community"
 RA_COL = "Type in your Name"
 DATE_COL = "start"
 
-# ---------------- SIDEBAR FILTERS ----------------
-st.sidebar.header("🔎 Filter Controls")
+# ---------------- FILTER CHAIN ----------------
+def apply_filters(df):
+    selected_lga = st.sidebar.selectbox("Confirm your LGA", ["All"] + sorted(df[LGA_COL].dropna().unique()))
+    if selected_lga != "All":
+        df = df[df[LGA_COL] == selected_lga]
 
-# Force refresh button
-if st.sidebar.button("🔄 Force Refresh Data"):
-    st.cache_data.clear()
-    st.success("Data cache cleared! Interact with any filter to reload.")
+    ward_options = ["All"] + sorted(df[WARD_COL].dropna().unique())
+    selected_ward = st.sidebar.selectbox("Confirm your ward", ward_options)
+    if selected_ward != "All":
+        df = df[df[WARD_COL] == selected_ward]
 
-# LGA filter
-selected_lga = st.sidebar.selectbox("Confirm your LGA", ["All"] + sorted(df_mortality[LGA_COL].dropna().unique()))
-filtered_by_lga = df_mortality.copy()
-if selected_lga != "All":
-    filtered_by_lga = filtered_by_lga[filtered_by_lga[LGA_COL] == selected_lga]
+    community_options = ["All"] + sorted(df[COMMUNITY_COL].dropna().unique())
+    selected_community = st.sidebar.selectbox("Confirm your community", community_options)
+    if selected_community != "All":
+        df = df[df[COMMUNITY_COL] == selected_community]
 
-# Ward filter
-ward_options = ["All"] + sorted(filtered_by_lga[WARD_COL].dropna().unique())
-selected_ward = st.sidebar.selectbox("Confirm your ward", ward_options)
-filtered_by_ward = filtered_by_lga.copy()
-if selected_ward != "All":
-    filtered_by_ward = filtered_by_ward[filtered_by_ward[WARD_COL] == selected_ward]
+    ra_options = ["All"] + sorted(df[RA_COL].dropna().unique())
+    selected_ra = st.sidebar.selectbox("Type in your Name", ra_options)
+    if selected_ra != "All":
+        df = df[df[RA_COL] == selected_ra]
 
-# Community filter
-community_options = ["All"] + sorted(filtered_by_ward[COMMUNITY_COL].dropna().unique())
-selected_community = st.sidebar.selectbox("Confirm your community", community_options)
-filtered_by_community = filtered_by_ward.copy()
-if selected_community != "All":
-    filtered_by_community = filtered_by_community[filtered_by_community[COMMUNITY_COL] == selected_community]
+    unique_dates = ["All"] + sorted(df[DATE_COL].dropna().dt.date.unique())
+    selected_date = st.sidebar.selectbox("Data Collection Date", unique_dates)
+    if selected_date != "All":
+        df = df[df[DATE_COL].dt.date == selected_date]
 
-# RA filter
-ra_options = ["All"] + sorted(filtered_by_community[RA_COL].dropna().unique())
-selected_ra = st.sidebar.selectbox("Type in your Name", ra_options)
-filtered_by_ra = filtered_by_community.copy()
-if selected_ra != "All":
-    filtered_by_ra = filtered_by_ra[filtered_by_ra[RA_COL] == selected_ra]
+    return df
 
-# Date filter
-unique_dates = ["All"] + sorted(filtered_by_ra[DATE_COL].dropna().dt.date.unique())
-selected_date = st.sidebar.selectbox("Data Collection Date", unique_dates)
-filtered_final = filtered_by_ra.copy()
-if selected_date != "All":
-    filtered_final = filtered_final[filtered_final[DATE_COL].dt.date == selected_date]
+filtered_final = apply_filters(df_mortality)
 
-# ---------------- FILTER QC TABLE ----------------
+# Filter QC
+submission_ids = filtered_final['_uuid'].unique()
+filtered_females = df_females[df_females['_submission__uuid'].isin(submission_ids)]
+filtered_preg = df_preg[df_preg['_submission__uuid'].isin(submission_ids)]
 filtered_df = df_qc[df_qc['_submission__uuid'].isin(filtered_final['_uuid'])]
 
 # ---------------- KPI CARDS ----------------
 st.title("📊 SARMAAN II - Updated QC Dashboard")
-kpi_values = [
-    ("Total Households Reached", filtered_final['_uuid'].nunique()),
-    ("Active Enumerators", filtered_final[RA_COL].nunique()),
-    ("Wards Reached", filtered_final[WARD_COL].nunique()),
-    ("Communities Reached", filtered_final[COMMUNITY_COL].nunique())
-]
-cols = st.columns(len(kpi_values))
-for col, (label, value) in zip(cols, kpi_values):
-    col.metric(label, value)
+cols = st.columns(4)
+cols[0].metric("Total Households Reached", filtered_final['_uuid'].nunique())
+cols[1].metric("Active Enumerators", filtered_final[RA_COL].nunique())
+cols[2].metric("Wards Reached", filtered_final[WARD_COL].nunique())
+cols[3].metric("Communities Reached", filtered_final[COMMUNITY_COL].nunique())
 st.markdown("---")
 
 # ---------------- QC CARDS ----------------
 st.subheader("🚨 QC Summary")
-qc_values = [
-    ("Duplicate Household", filtered_final.duplicated(subset="unique_code").sum()),
-    ("Duplicate Mother", df_females[df_females['_submission__uuid'].isin(filtered_final['_uuid'])].duplicated(subset="mother_id").sum()),
-    ("Duplicate Child", df_preg[df_preg['_submission__uuid'].isin(filtered_final['_uuid'])].duplicated(subset="child_id").sum()),
-    ("Born Alive mismatch", (filtered_df["QC_Issues"].str.contains("Born Alive mismatch")).sum()),
-    ("Born Dead mismatch", (filtered_df["QC_Issues"].str.contains("Born Dead mismatch")).sum()),
-    ("Miscarrage mismatch", (filtered_df["QC_Issues"].str.contains("Miscarrage mismatch")).sum())
-]
-cols = st.columns(len(qc_values))
-for col, (label, value) in zip(cols, qc_values):
-    col.metric(label, value)
+cols = st.columns(6)
+cols[0].metric("Duplicate Household", filtered_final.duplicated(subset="unique_code").sum())
+cols[1].metric("Duplicate Mother", filtered_females.duplicated(subset="mother_id").sum())
+cols[2].metric("Duplicate Child", filtered_preg.duplicated(subset="child_id").sum())
+cols[3].metric("Born Alive mismatch", (filtered_df["QC_Issues"].str.contains("Born Alive mismatch")).sum())
+cols[4].metric("Born Dead mismatch", (filtered_df["QC_Issues"].str.contains("Born Dead mismatch")).sum())
+cols[5].metric("Miscarrage mismatch", (filtered_df["QC_Issues"].str.contains("Miscarrage mismatch")).sum())
 st.markdown("---")
 
 # ---------------- ERRORS BY ENUMERATOR ----------------
