@@ -68,7 +68,6 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     for col in [c_alive_col, c_dead_col, miscarriage_col, boys_dead_col, girls_dead_col]:
         if col not in df_females.columns:
             df_females[col] = 0
-            # update name variable to point to an existing column if None
             if col is None:
                 pass
 
@@ -80,16 +79,9 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
         boys_dead_col: 'sum',
         girls_dead_col: 'sum'
     }).reset_index()
-    # total children died (boys + girls) — keep, but not used for the new checks (left for compatibility)
     females_agg['total_children_died'] = females_agg[boys_dead_col].fillna(0) + females_agg[girls_dead_col].fillna(0)
 
-    # ---------------- UPDATED PREGNANCY-LEVEL AGGREGATIONS ----------------
-    # We'll compute per _submission__uuid:
-    # - Born_Alive_count: count of records where outcome_col == "Born Alive" AND still_alive_col == "Yes"
-    # - Later_Died: count of still_alive_col == "No"
-    # - Miscarriage_Abortion_count: count of outcome in {"Miscarriage and Abortion", "Born dead"}
-
-    # Defensive: if outcome_col or still_alive_col missing, replace with dummy columns in df_preg_history to avoid KeyError
+    # Pregnancy-level aggregation
     preg = df_preg_history.copy()
     if outcome_col not in preg.columns:
         preg['_outcome_dummy'] = np.nan
@@ -99,18 +91,10 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
         still_alive_col = '_still_alive_dummy'
 
     def per_submission_agg(g):
-        # Born alive AND still alive == Yes
         born_alive_and_alive = ((g[outcome_col] == "Born Alive") & (g[still_alive_col] == "Yes")).sum()
-
-        # Later died: count of still_alive_col == "No"
         later_died = (g[still_alive_col] == "No").sum()
-
-        # Miscarriage count: count of outcome == "Miscarriage and Abortion" OR "Born dead"
         miscarriage_count = ((g[outcome_col] == "Miscarriage and Abortion") | (g[outcome_col] == "Born dead")).sum()
-
-        # Also compute born dead raw if needed (birth outcome == "Born dead")
         born_dead_raw = (g[outcome_col] == "Born dead").sum()
-
         return pd.Series({
             "Born_Alive": int(born_alive_and_alive),
             "Later_Died": int(later_died),
@@ -119,30 +103,18 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
         })
 
     preg_counts = preg.groupby('_submission__uuid').apply(per_submission_agg).reset_index()
-
-    # Merge females_agg with pregnancy aggregates
     merged = females_agg.merge(preg_counts, on="_submission__uuid", how="left").fillna(0)
 
-    # ---------------- QC logic using the new rules ----------------
+    # QC logic
     qc_rows = []
     for _, row in merged.iterrows():
         errors = []
-
-        # 1) Born Alive: females.c_alive must equal number of Born_Alive (Born Alive & still alive yes)
         if c_alive_col and c_alive_col in row and int(row[c_alive_col]) != int(row['Born_Alive']):
             errors.append("Born Alive mismatch")
-
-        # 2) Miscarriage_count: females.misscarraige_count must equal preg count of (Miscarriage and Abortion + Born dead)
         if miscarriage_col and miscarriage_col in row and int(row[miscarriage_col]) != int(row['Miscarriage_Abortion']):
             errors.append("Miscarrage mismatch")
-
-        # 3) Born Alive but Later Died: females.c_dead must equal number of Q124 == "No" (Later_Died)
         if c_dead_col and c_dead_col in row and int(row[c_dead_col]) != int(row['Later_Died']):
             errors.append("Born Alive but Later Died mismatch")
-
-        # Keep previous check for total_children_died vs Later_Died if you still want it flagged (optional)
-        # (I will not add this as it's redundant with the above rules; keep original behavior minimal)
-
         qc_rows.append({
             "_submission__uuid": row['_submission__uuid'],
             "QC_Issues": "; ".join(errors) if errors else "No Errors",
@@ -151,7 +123,7 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
 
     qc_df = pd.DataFrame(qc_rows)
 
-    # ---------------- MAP ENUMERATOR ----------------
+    # Map enumerator
     ra_col = find_column_with_suffix(df_mortality, "Type in your Name")
     if ra_col and ra_col in df_mortality.columns:
         qc_df = qc_df.merge(
@@ -165,14 +137,11 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
 
     qc_df.drop(columns=["_uuid"], inplace=True, errors='ignore')
     qc_df["Error_Percentage"] = (qc_df["Total_Flags"] / 4) * 100
-
     return qc_df
 
 # ---------------- MAIN DASHBOARD FUNCTION ----------------
 def run_dashboard():
-    # Load data
     df_mortality, df_females, df_preg = load_data()
-
     if df_females.empty or df_mortality.empty or df_preg.empty:
         st.stop()
 
@@ -187,37 +156,28 @@ def run_dashboard():
         selected_lga = st.sidebar.selectbox("Confirm your LGA", ["All"] + sorted(df[LGA_COL].dropna().unique()))
         if selected_lga != "All":
             df = df[df[LGA_COL] == selected_lga]
-
         ward_options = ["All"] + sorted(df[WARD_COL].dropna().unique())
         selected_ward = st.sidebar.selectbox("Confirm your ward", ward_options)
         if selected_ward != "All":
             df = df[df[WARD_COL] == selected_ward]
-
         community_options = ["All"] + sorted(df[COMMUNITY_COL].dropna().unique())
         selected_community = st.sidebar.selectbox("Confirm your community", community_options)
         if selected_community != "All":
             df = df[df[COMMUNITY_COL] == selected_community]
-
         ra_options = ["All"] + sorted(df[RA_COL].dropna().unique())
         selected_ra = st.sidebar.selectbox("Type in your Name", ra_options)
         if selected_ra != "All":
             df = df[df[RA_COL] == selected_ra]
-
         unique_dates = ["All"] + sorted(df[DATE_COL].dropna().dt.date.unique())
         selected_date = st.sidebar.selectbox("Data Collection Date", unique_dates)
         if selected_date != "All":
             df = df[df[DATE_COL].dt.date == selected_date]
-
         return df
 
     filtered_final = apply_filters(df_mortality)
-
-    # Filter QC
     submission_ids = filtered_final['_uuid'].unique()
     filtered_females = df_females[df_females['_submission__uuid'].isin(submission_ids)]
     filtered_preg = df_preg[df_preg['_submission__uuid'].isin(submission_ids)]
-
-    # QC DF
     df_qc = generate_qc_dataframe(df_mortality, df_females, df_preg)
     filtered_df = df_qc[df_qc['_submission__uuid'].isin(filtered_final['_uuid'])]
 
@@ -248,14 +208,37 @@ def run_dashboard():
 
     # QC Table
     st.subheader("📋 QC Records and Errors per Enumerator")
+
+    # Create flags for duplicates
+    filtered_df['Duplicate_Household'] = filtered_final.duplicated(subset="unique_code", keep=False)
+    filtered_df['Duplicate_Mother'] = filtered_females.duplicated(subset="mother_id", keep=False)
+    filtered_df['Duplicate_Child'] = filtered_preg.duplicated(subset="child_id", keep=False)
+
+    # Keep only rows with errors or duplicates
+    display_df = filtered_df[
+        (filtered_df["Total_Flags"] > 0) |
+        (filtered_df['Duplicate_Household']) |
+        (filtered_df['Duplicate_Mother']) |
+        (filtered_df['Duplicate_Child'])
+    ].copy()
+
+    # ---------------- CONDITIONAL FORMATTING ----------------
+    def highlight_errors(val):
+        if val != "No Errors":
+            return 'background-color: #f8d7da'  # light red
+        return ''
+
     st.dataframe(
-        filtered_df[[
+        display_df[[
             "Research_Assistant",
             '_submission__uuid',
             'QC_Issues',
             'Total_Flags',
-            'Error_Percentage'
-        ]],
+            'Error_Percentage',
+            'Duplicate_Household',
+            'Duplicate_Mother',
+            'Duplicate_Child'
+        ]].style.applymap(highlight_errors, subset=['QC_Issues']),
         use_container_width=True,
         height=500
     )
