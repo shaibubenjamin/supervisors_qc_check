@@ -23,7 +23,7 @@ PREG_SHEET = "pregnancy_history"
 
 # ---------------- SAFE DATA LOADER ----------------
 @st.cache_data(show_spinner=True)
-def load_data(force_reload=False):
+def load_data():
     try:
         response = requests.get(DATA_URL, timeout=60)
         response.raise_for_status()
@@ -42,26 +42,6 @@ def load_data(force_reload=False):
         st.error(f"Error loading workbook: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-# ---------------- SESSION STATE FOR FORCE REFRESH ----------------
-if 'force_refresh' not in st.session_state:
-    st.session_state.force_refresh = False
-
-st.sidebar.header("🔎 Filter Controls")
-
-if st.sidebar.button("🔄 Force Refresh Data"):
-    st.session_state.force_refresh = True
-
-# Load data with force refresh handling
-if st.session_state.force_refresh:
-    st.cache_data.clear()
-    df_mortality, df_females, df_preg = load_data(force_reload=True)
-    st.session_state.force_refresh = False
-else:
-    df_mortality, df_females, df_preg = load_data()
-
-if df_females.empty or df_mortality.empty or df_preg.empty:
-    st.stop()
-
 # ---------------- HELPER ----------------
 def find_column_with_suffix(df, keyword):
     for col in df.columns:
@@ -69,9 +49,7 @@ def find_column_with_suffix(df, keyword):
             return col
     return None
 
-# ================================
-# UPDATED QC ENGINE
-# ================================
+# ---------------- QC ENGINE ----------------
 def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     outcome_col = find_column_with_suffix(df_preg_history, "Was the baby born alive")
     still_alive_col = find_column_with_suffix(df_preg_history, "still alive")
@@ -106,7 +84,6 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     qc_rows = []
     for _, row in merged.iterrows():
         errors = []
-
         if row[c_alive_col] != row['Born_Alive']:
             errors.append("Born Alive mismatch")
         if row[miscarriage_col] != row['Miscarriage_Abortion']:
@@ -115,7 +92,6 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
             errors.append("Born Dead mismatch")
         if row['total_children_died'] != row['Later_Died']:
             errors.append("Children Born Alive Later Died Mismatch")
-
         qc_rows.append({
             "_submission__uuid": row['_submission__uuid'],
             "QC_Issues": "; ".join(errors) if errors else "No Errors",
@@ -137,101 +113,123 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
 
     return qc_df
 
-# ---------------- RUN QC ENGINE ----------------
-df_qc = generate_qc_dataframe(df_mortality, df_females, df_preg)
+# ---------------- MAIN DASHBOARD FUNCTION ----------------
+def run_dashboard():
+    # Load data
+    df_mortality, df_females, df_preg = load_data()
 
-# ---------------- COLUMN NAMES ----------------
-LGA_COL = "Confirm your LGA"
-WARD_COL = "Confirm your ward"
-COMMUNITY_COL = "Confirm your community"
-RA_COL = "Type in your Name"
-DATE_COL = "start"
+    if df_females.empty or df_mortality.empty or df_preg.empty:
+        st.stop()
 
-# ---------------- FILTER CHAIN ----------------
-def apply_filters(df):
-    selected_lga = st.sidebar.selectbox("Confirm your LGA", ["All"] + sorted(df[LGA_COL].dropna().unique()))
-    if selected_lga != "All":
-        df = df[df[LGA_COL] == selected_lga]
+    # Filters
+    LGA_COL = "Confirm your LGA"
+    WARD_COL = "Confirm your ward"
+    COMMUNITY_COL = "Confirm your community"
+    RA_COL = "Type in your Name"
+    DATE_COL = "start"
 
-    ward_options = ["All"] + sorted(df[WARD_COL].dropna().unique())
-    selected_ward = st.sidebar.selectbox("Confirm your ward", ward_options)
-    if selected_ward != "All":
-        df = df[df[WARD_COL] == selected_ward]
+    def apply_filters(df):
+        selected_lga = st.sidebar.selectbox("Confirm your LGA", ["All"] + sorted(df[LGA_COL].dropna().unique()))
+        if selected_lga != "All":
+            df = df[df[LGA_COL] == selected_lga]
 
-    community_options = ["All"] + sorted(df[COMMUNITY_COL].dropna().unique())
-    selected_community = st.sidebar.selectbox("Confirm your community", community_options)
-    if selected_community != "All":
-        df = df[df[COMMUNITY_COL] == selected_community]
+        ward_options = ["All"] + sorted(df[WARD_COL].dropna().unique())
+        selected_ward = st.sidebar.selectbox("Confirm your ward", ward_options)
+        if selected_ward != "All":
+            df = df[df[WARD_COL] == selected_ward]
 
-    ra_options = ["All"] + sorted(df[RA_COL].dropna().unique())
-    selected_ra = st.sidebar.selectbox("Type in your Name", ra_options)
-    if selected_ra != "All":
-        df = df[df[RA_COL] == selected_ra]
+        community_options = ["All"] + sorted(df[COMMUNITY_COL].dropna().unique())
+        selected_community = st.sidebar.selectbox("Confirm your community", community_options)
+        if selected_community != "All":
+            df = df[df[COMMUNITY_COL] == selected_community]
 
-    unique_dates = ["All"] + sorted(df[DATE_COL].dropna().dt.date.unique())
-    selected_date = st.sidebar.selectbox("Data Collection Date", unique_dates)
-    if selected_date != "All":
-        df = df[df[DATE_COL].dt.date == selected_date]
+        ra_options = ["All"] + sorted(df[RA_COL].dropna().unique())
+        selected_ra = st.sidebar.selectbox("Type in your Name", ra_options)
+        if selected_ra != "All":
+            df = df[df[RA_COL] == selected_ra]
 
-    return df
+        unique_dates = ["All"] + sorted(df[DATE_COL].dropna().dt.date.unique())
+        selected_date = st.sidebar.selectbox("Data Collection Date", unique_dates)
+        if selected_date != "All":
+            df = df[df[DATE_COL].dt.date == selected_date]
 
-filtered_final = apply_filters(df_mortality)
+        return df
 
-# Filter QC
-submission_ids = filtered_final['_uuid'].unique()
-filtered_females = df_females[df_females['_submission__uuid'].isin(submission_ids)]
-filtered_preg = df_preg[df_preg['_submission__uuid'].isin(submission_ids)]
-filtered_df = df_qc[df_qc['_submission__uuid'].isin(filtered_final['_uuid'])]
+    filtered_final = apply_filters(df_mortality)
 
-# ---------------- KPI CARDS ----------------
-st.title("📊 SARMAAN II - Updated QC Dashboard")
-cols = st.columns(4)
-cols[0].metric("Total Households Reached", filtered_final['_uuid'].nunique())
-cols[1].metric("Active Enumerators", filtered_final[RA_COL].nunique())
-cols[2].metric("Wards Reached", filtered_final[WARD_COL].nunique())
-cols[3].metric("Communities Reached", filtered_final[COMMUNITY_COL].nunique())
-st.markdown("---")
+    # Filter QC
+    submission_ids = filtered_final['_uuid'].unique()
+    filtered_females = df_females[df_females['_submission__uuid'].isin(submission_ids)]
+    filtered_preg = df_preg[df_preg['_submission__uuid'].isin(submission_ids)]
 
-# ---------------- QC CARDS ----------------
-st.subheader("🚨 QC Summary")
-cols = st.columns(6)
-cols[0].metric("Duplicate Household", filtered_final.duplicated(subset="unique_code").sum())
-cols[1].metric("Duplicate Mother", filtered_females.duplicated(subset="mother_id").sum())
-cols[2].metric("Duplicate Child", filtered_preg.duplicated(subset="child_id").sum())
-cols[3].metric("Born Alive mismatch", (filtered_df["QC_Issues"].str.contains("Born Alive mismatch")).sum())
-cols[4].metric("Born Dead mismatch", (filtered_df["QC_Issues"].str.contains("Born Dead mismatch")).sum())
-cols[5].metric("Miscarrage mismatch", (filtered_df["QC_Issues"].str.contains("Miscarrage mismatch")).sum())
-st.markdown("---")
+    # QC DF
+    df_qc = generate_qc_dataframe(df_mortality, df_females, df_preg)
+    filtered_df = df_qc[df_qc['_submission__uuid'].isin(filtered_final['_uuid'])]
 
-# ---------------- ERRORS BY ENUMERATOR ----------------
-st.subheader("📉 QC Errors by Enumerator")
-error_by_ra = filtered_df.groupby("Research_Assistant")['Total_Flags'].sum().reset_index()
-st.bar_chart(error_by_ra.set_index("Research_Assistant"), use_container_width=True)
+    # KPI CARDS
+    st.title("📊 SARMAAN II - Updated QC Dashboard")
+    cols = st.columns(4)
+    cols[0].metric("Total Households Reached", filtered_final['_uuid'].nunique())
+    cols[1].metric("Active Enumerators", filtered_final[RA_COL].nunique())
+    cols[2].metric("Wards Reached", filtered_final[WARD_COL].nunique())
+    cols[3].metric("Communities Reached", filtered_final[COMMUNITY_COL].nunique())
+    st.markdown("---")
 
-# ---------------- QC TABLE PER ENUMERATOR ----------------
-st.subheader("📋 QC Records and Errors per Enumerator")
-st.dataframe(
-    filtered_df[[
-        "Research_Assistant",
-        '_submission__uuid',
-        'QC_Issues',
-        'Total_Flags',
-        'Error_Percentage'
-    ]],
-    use_container_width=True,
-    height=500
-)
+    # QC CARDS
+    st.subheader("🚨 QC Summary")
+    cols = st.columns(6)
+    cols[0].metric("Duplicate Household", filtered_final.duplicated(subset="unique_code").sum())
+    cols[1].metric("Duplicate Mother", filtered_females.duplicated(subset="mother_id").sum())
+    cols[2].metric("Duplicate Child", filtered_preg.duplicated(subset="child_id").sum())
+    cols[3].metric("Born Alive mismatch", (filtered_df["QC_Issues"].str.contains("Born Alive mismatch")).sum())
+    cols[4].metric("Born Dead mismatch", (filtered_df["QC_Issues"].str.contains("Born Dead mismatch")).sum())
+    cols[5].metric("Miscarrage mismatch", (filtered_df["QC_Issues"].str.contains("Miscarrage mismatch")).sum())
+    st.markdown("---")
 
-# ---------------- RESPONSIVE CSS ----------------
-st.markdown(
-    """
-    <style>
-    .stDataFrame, .stTable {
-        width: 100% !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+    # Errors by RA
+    st.subheader("📉 QC Errors by Enumerator")
+    error_by_ra = filtered_df.groupby("Research_Assistant")['Total_Flags'].sum().reset_index()
+    st.bar_chart(error_by_ra.set_index("Research_Assistant"), use_container_width=True)
 
-st.success("✅ QC Dashboard Updated with Filters, KPIs & Error Analytics")
+    # QC Table
+    st.subheader("📋 QC Records and Errors per Enumerator")
+    st.dataframe(
+        filtered_df[[
+            "Research_Assistant",
+            '_submission__uuid',
+            'QC_Issues',
+            'Total_Flags',
+            'Error_Percentage'
+        ]],
+        use_container_width=True,
+        height=500
+    )
+
+    # CSS
+    st.markdown(
+        """
+        <style>
+        .stDataFrame, .stTable {
+            width: 100% !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.success("✅ QC Dashboard Updated with Filters, KPIs & Error Analytics")
+
+
+# ---------------- FORCE REFRESH BUTTON ----------------
+if 'refresh' not in st.session_state:
+    st.session_state.refresh = False
+
+if st.sidebar.button("🔄 Force Refresh Data"):
+    st.cache_data.clear()
+    st.session_state.refresh = True
+
+if st.session_state.refresh:
+    st.session_state.refresh = False
+    run_dashboard()  # Force reload
+else:
+    run_dashboard()
