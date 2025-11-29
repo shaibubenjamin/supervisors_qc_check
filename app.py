@@ -9,20 +9,114 @@ import streamlit as st
 import requests
 from io import BytesIO
 
+# ---------------- SESSION STATE INITIALIZATION ----------------
+if 'usage_count' not in st.session_state:
+    st.session_state.usage_count = 0
+if 'refresh' not in st.session_state:
+    st.session_state.refresh = False
+
 # ---------------- CONFIG ----------------
 st.set_page_config(
-    page_title="SARMAAN II QC Dashboard (Responsive)",
-    layout="wide"
+    page_title="SARMAAN II QC Dashboard",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
+# --- START: Custom CSS for light mode aesthetics and cleaner look ---
+st.markdown(
+    """
+    <style>
+    /* Ensure Light Mode dominance and clean aesthetic */
+    
+    /* 1. Dashboard Title Styling (Changed to Pure Black) */
+    .big-title {
+        font-size: 2.5em;
+        font-weight: 700;
+        color: #000000; /* Pure Black as requested */
+        margin-bottom: 0.5em;
+    }
+
+    /* 2. Streamlit Metric Enhancements */
+    /* stMetricValue is styled by the custom metric function for consistency */
+    [data-testid="stMetricLabel"] {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #708090; /* Slate Gray for labels */
+    }
+
+    /* 3. Subheader Styling for distinction (ALL H2 ARE DARK: #333333) */
+    h2 {
+        border-bottom: 2px solid #f0f2f6; /* Subtle separator */
+        padding-bottom: 10px;
+        margin-top: 1.5em;
+        color: #333333; /* Dark text for light background */
+    }
+    
+    /* 4. Sidebar enhancements */
+    .stSidebar {
+        background-color: #f7f9fc; /* Very light background for sidebar */
+    }
+    
+    /* 5. Dataframe conditional formatting visibility (re-apply table full width) */
+    .stDataFrame, .stTable {
+        width: 100% !important;
+    }
+    
+    /* 6. Remove excess spacing around columns/containers */
+    .st-emotion-cache-p5m854 { /* Target the main block container */
+        padding-top: 0rem;
+    }
+    
+    /* Style for the custom metric boxes to keep consistency */
+    .custom-metric-value {
+        font-size: 2rem; 
+        font-weight: 600;
+        margin-top: 0px;
+    }
+    .custom-metric-label {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #708090;
+        margin-bottom: 0px;
+    }
+    
+    /* 7. Usage Counter Bar Styling (Matching st.success styling - Green) */
+    .usage-bar-container {
+        padding: 5px 15px;
+        /* Using standard success background and border colors for matching shade */
+        background-color: rgb(232, 245, 233); /* Same as st.success background */
+        border-radius: 0.5rem;
+        margin-bottom: 15px;
+        border: 1px solid rgb(76, 175, 80); /* Same as st.success border/icon color */
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .usage-text {
+        color: rgb(76, 175, 80); /* Same as st.success text color */
+        font-weight: 600;
+        font-size: 0.9rem;
+    }
+    
+    /* 8. Target and remove specific elements from Streamlit's rendering */
+    .stSidebar .stSelectbox label {
+        color: #333333; /* Ensure filter labels are dark */
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+# --- END: Custom CSS ---
+
+
 # ---------------- DATA SOURCE ----------------
-DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aLJKVSdGWdGybZznuKXFCM/export-settings/esyo5XY29VoLgyLsGRg4mNz/data.xlsx"
-MAIN_SHEET = "SARMAAN II Mortality form- D..."
-FEMALES_SHEET = "females"
+DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/esdRJA8rZjSFXDi3o3adous/data.xlsx"
+MAIN_SHEET = "mortality_pilot_cluster_two-..."
+FEMALES_SHEET = "female"
 PREG_SHEET = "pregnancy_history"
 
 # ---------------- SAFE DATA LOADER ----------------
-@st.cache_data(show_spinner=True)
+@st.cache_data(show_spinner="⏳ Loading and processing data... Please wait.", ttl=3600)
 def load_data():
     try:
         response = requests.get(DATA_URL, timeout=60)
@@ -32,7 +126,7 @@ def load_data():
 
         df_mortality = data_dict[MAIN_SHEET]
         df_females = data_dict[FEMALES_SHEET]
-        df_preg = data_dict[PREG_PEG := PREG_SHEET] if False else data_dict[PREG_SHEET]  # keep variable as PREG_SHEET; no change
+        df_preg = data_dict[PREG_SHEET] 
 
         # Ensure proper datetime for filtering
         if "start" in df_mortality.columns:
@@ -40,7 +134,7 @@ def load_data():
 
         return df_mortality, df_females, df_preg
     except Exception as e:
-        st.error(f"Error loading workbook: {e}")
+        st.error(f"❌ Error loading workbook: {e}") 
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 # ---------------- HELPER ----------------
@@ -53,7 +147,7 @@ def find_column_with_suffix(df, keyword):
             return col
     return None
 
-# ---------------- QC ENGINE ----------------
+# ---------------- QC ENGINE (Functionality unchanged) ----------------
 def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     # Find important columns (may return None if not found)
     outcome_col = find_column_with_suffix(df_preg_history, "Was the baby born alive")
@@ -140,7 +234,41 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     return qc_df
 
 # ---------------- MAIN DASHBOARD FUNCTION ----------------
+
+# Helper function for consistent QC Metric display (per user request)
+def display_qc_metric(col_obj, label, value):
+    """Displays a QC metric with '✅' if value = 0, or '🚫' and red text if value > 0."""
+    icon = "✅" if value == 0 else "🚫"
+    color = "#333333" if value == 0 else "#D32F2F" # Dark text for good, Red for error
+    
+    # Use HTML to display the icon, label, and value clearly
+    col_obj.markdown(
+        f"""
+        <p class="custom-metric-label">
+            {icon} {label}
+        </p>
+        <h4 class="custom-metric-value" style="color: {color};">{value:,}</h4>
+        """, 
+        unsafe_allow_html=True
+    )
+
 def run_dashboard():
+    # Increment usage count
+    st.session_state.usage_count += 1
+    
+    # --- USAGE COUNTER BAR (Green) ---
+    st.markdown(
+        f"""
+        <div class="usage-bar-container">
+            <span class="usage-text">
+                Dashboard Usage Count (Runs/Refreshes): <strong>{st.session_state.usage_count}</strong>
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    # --------------------------------
+
     df_mortality, df_females, df_preg = load_data()
     if df_females.empty or df_mortality.empty or df_preg.empty:
         st.stop()
@@ -152,122 +280,195 @@ def run_dashboard():
     RA_COL = "Type in your Name"
     DATE_COL = "start"
 
-    def apply_filters(df):
-        selected_lga = st.sidebar.selectbox("Confirm your LGA", ["All"] + sorted(df[LGA_COL].dropna().unique()))
-        if selected_lga != "All":
-            df = df[df[LGA_COL] == selected_lga]
-        ward_options = ["All"] + sorted(df[WARD_COL].dropna().unique())
-        selected_ward = st.sidebar.selectbox("Confirm your ward", ward_options)
-        if selected_ward != "All":
-            df = df[df[WARD_COL] == selected_ward]
-        community_options = ["All"] + sorted(df[COMMUNITY_COL].dropna().unique())
-        selected_community = st.sidebar.selectbox("Confirm your community", community_options)
-        if selected_community != "All":
-            df = df[df[COMMUNITY_COL] == selected_community]
-        ra_options = ["All"] + sorted(df[RA_COL].dropna().unique())
-        selected_ra = st.sidebar.selectbox("Type in your Name", ra_options)
-        if selected_ra != "All":
-            df = df[df[RA_COL] == selected_ra]
-        unique_dates = ["All"] + sorted(df[DATE_COL].dropna().dt.date.unique())
-        selected_date = st.sidebar.selectbox("Data Collection Date", unique_dates)
-        if selected_date != "All":
-            df = df[df[DATE_COL].dt.date == selected_date]
-        return df
+    # --- Improved Sidebar Layout (UX) ---
+    with st.sidebar:
+        st.header("Data Filters") 
+        st.markdown("---")
+        
+        # Define filter function (unchanged)
+        def apply_filters(df):
+            selected_lga = st.selectbox("LGA", ["All"] + sorted(df[LGA_COL].dropna().unique()))
+            if selected_lga != "All":
+                df = df[df[LGA_COL] == selected_lga]
+            ward_options = ["All"] + sorted(df[WARD_COL].dropna().unique())
+            selected_ward = st.selectbox("Ward", ward_options)
+            if selected_ward != "All":
+                df = df[df[WARD_COL] == selected_ward]
+            community_options = ["All"] + sorted(df[COMMUNITY_COL].dropna().unique())
+            selected_community = st.selectbox("Community", community_options)
+            if selected_community != "All":
+                df = df[df[COMMUNITY_COL] == selected_community]
+            ra_options = ["All"] + sorted(df[RA_COL].dropna().unique())
+            selected_ra = st.selectbox("Research Assistant", ra_options) # Renamed for clarity
+            if selected_ra != "All":
+                df = df[df[RA_COL] == selected_ra]
+            unique_dates = ["All"] + sorted(df[DATE_COL].dropna().dt.date.unique())
+            selected_date = st.selectbox("Collection Date", unique_dates) # Renamed for brevity
+            if selected_date != "All":
+                df = df[df[DATE_COL].dt.date == selected_date]
+            return df
 
-    filtered_final = apply_filters(df_mortality)
+        # Apply filters
+        filtered_final = apply_filters(df_mortality)
+    # --- End Sidebar ---
+
+
     submission_ids = filtered_final['_uuid'].unique()
     filtered_females = df_females[df_females['_submission__uuid'].isin(submission_ids)]
     filtered_preg = df_preg[df_preg['_submission__uuid'].isin(submission_ids)]
     df_qc = generate_qc_dataframe(df_mortality, df_females, df_preg)
     filtered_df = df_qc[df_qc['_submission__uuid'].isin(filtered_final['_uuid'])]
 
-    # KPI CARDS
-    st.title("📊 SARMAAN II - Updated QC Dashboard")
-    cols = st.columns(4)
-    cols[0].metric("Total Households Reached", filtered_final['_uuid'].nunique())
-    cols[1].metric("Active Enumerators", filtered_final[RA_COL].nunique())
-    cols[2].metric("Wards Reached", filtered_final[WARD_COL].nunique())
-    cols[3].metric("Communities Reached", filtered_final[COMMUNITY_COL].nunique())
-    st.markdown("---")
 
-    # QC CARDS
-    st.subheader("🚨 QC Summary")
-    cols = st.columns(6)
-    cols[0].metric("Duplicate Household", filtered_final.duplicated(subset="unique_code").sum())
-    cols[1].metric("Duplicate Mother", filtered_females.duplicated(subset="mother_id").sum())
-    cols[2].metric("Duplicate Child", filtered_preg.duplicated(subset="child_id").sum())
-    cols[3].metric("Born Alive mismatch", (filtered_df["QC_Issues"].str.contains("Born Alive mismatch")).sum())
-    cols[4].metric("B.Alive,later Died mismatch", (filtered_df["QC_Issues"].str.contains("Born Alive but Later Died mismatch")).sum())
-    cols[5].metric("Miscarrage mismatch", (filtered_df["QC_Issues"].str.contains("Miscarrage mismatch")).sum())
-    st.markdown("---")
+    # --- Improved Header and Operational Metrics (KPI CARDS) ---
+    # The title is styled via the CSS class .big-title, which now uses the pure black color
+    st.markdown('<div class="big-title">SARMAAN II - QC Dashboard</div>', unsafe_allow_html=True)
+    st.caption("Data Quality Control and Monitoring")
+    
+    st.subheader("🎯 Operational Metrics")
+    
+    with st.container(border=True): # Container for visual grouping
+        cols = st.columns(4)
+        cols[0].metric("Total Households Reached", f"{filtered_final['_uuid'].nunique():,}", help="Unique household submissions.")
+        cols[1].metric("Active Enumerators", filtered_final[RA_COL].nunique(), help="Number of RAs who submitted data for the current filter.")
+        cols[2].metric("Wards Reached", filtered_final[WARD_COL].nunique(), help="Unique wards covered.")
+        cols[3].metric("Communities Reached", filtered_final[COMMUNITY_COL].nunique(), help="Unique communities covered.")
+    
+    # ----------------------------------------------------
 
-    # Errors by RA
-    st.subheader("📉 QC Errors by Enumerator")
+    # ----------------------------------------------------
+    st.subheader("🚨 Quality Control Summary")
+    
+    with st.container(border=True):
+        cols = st.columns(6)
+        
+        # Duplicates (Now using custom display_qc_metric)
+        duplicate_household = filtered_final.duplicated(subset="unique_code").sum()
+        duplicate_mother = filtered_females.duplicated(subset="mother_id").sum()
+        duplicate_child = filtered_preg.duplicated(subset="child_id").sum()
+        
+        # QC Mismatch Metrics 
+        born_alive_mismatch = (filtered_df["QC_Issues"].str.contains("Born Alive mismatch")).sum()
+        later_died_mismatch = (filtered_df["QC_Issues"].str.contains("Born Alive but Later Died mismatch")).sum()
+        miscarriage_mismatch = (filtered_df["QC_Issues"].str.contains("Miscarrage mismatch")).sum()
+
+        # Apply the consistent metric display to all 6
+        display_qc_metric(cols[0], "Duplicate Household", duplicate_household)
+        display_qc_metric(cols[1], "Duplicate Mother", duplicate_mother)
+        display_qc_metric(cols[2], "Duplicate Child", duplicate_child)
+        display_qc_metric(cols[3], "Born Alive Mismatch", born_alive_mismatch)
+        display_qc_metric(cols[4], "B.Alive, Later Died Mismatch", later_died_mismatch)
+        display_qc_metric(cols[5], "Miscarriage Mismatch", miscarriage_mismatch)
+    
+    st.markdown("---")
+    # ----------------------------------------------------
+
+
+    st.subheader("📈 QC Errors by Enumerator")
+    
     error_by_ra = filtered_df.groupby("Research_Assistant")['Total_Flags'].sum().reset_index()
-    st.bar_chart(error_by_ra.set_index("Research_Assistant"), use_container_width=True)
+    error_by_ra = error_by_ra.sort_values(by='Total_Flags', ascending=False)
+    
+    st.bar_chart(
+        error_by_ra.set_index("Research_Assistant"), 
+        use_container_width=True, 
+        color="#D32F2F" # Error color (kept red for errors/flags)
+    )
 
-    # QC Table
-    st.subheader("📋 QC Records and Errors per Enumerator")
-
+    st.subheader("📋 Detailed Error Records")
+    
     # Create flags for duplicates
-    filtered_df['Duplicate_Household'] = filtered_final.duplicated(subset="unique_code", keep=False)
-    filtered_df['Duplicate_Mother'] = filtered_females.duplicated(subset="mother_id", keep=False)
-    filtered_df['Duplicate_Child'] = filtered_preg.duplicated(subset="child_id", keep=False)
+    display_df = filtered_df.copy()
+    
+    dupe_df = filtered_final[['_uuid', LGA_COL, WARD_COL, COMMUNITY_COL]].rename(columns={'_uuid': '_submission__uuid'})
+    display_df = display_df.merge(dupe_df, on="_submission__uuid", how="left")
+    
+    # Recalculate duplicates markers for display (keeping original functionality)
+    unique_codes = filtered_final["unique_code"].value_counts()
+    duplicate_codes = unique_codes[unique_codes > 1].index
+    mother_ids = filtered_females["mother_id"].value_counts()
+    duplicate_mothers = mother_ids[mother_ids > 1].index
+    child_ids = filtered_preg["child_id"].value_counts()
+    duplicate_children = child_ids[child_ids > 1].index
+    
+    display_df['Duplicate_Household'] = display_df['_submission__uuid'].apply(
+        lambda x: '🚨' if filtered_final[filtered_final['_uuid'] == x]['unique_code'].iloc[0] in duplicate_codes else ''
+    )
+    display_df['Duplicate_Mother'] = display_df['_submission__uuid'].apply(
+        lambda x: '🚨' if any(filtered_females[filtered_females['_submission__uuid'] == x]['mother_id'].isin(duplicate_mothers)) else ''
+    )
+    display_df['Duplicate_Child'] = display_df['_submission__uuid'].apply(
+        lambda x: '🚨' if any(filtered_preg[filtered_preg['_submission__uuid'] == x]['child_id'].isin(duplicate_children)) else ''
+    )
 
     # Keep only rows with errors or duplicates
-    display_df = filtered_df[
-        (filtered_df["Total_Flags"] > 0) |
-        (filtered_df['Duplicate_Household']) |
-        (filtered_df['Duplicate_Mother']) |
-        (filtered_df['Duplicate_Child'])
+    display_df = display_df[
+        (display_df["Total_Flags"] > 0) |
+        (display_df['Duplicate_Household'] != '') |
+        (display_df['Duplicate_Mother'] != '') |
+        (display_df['Duplicate_Child'] != '')
     ].copy()
 
     # ---------------- CONDITIONAL FORMATTING ----------------
     def highlight_errors(val):
+        """Highlights the QC Issues column."""
         if val != "No Errors":
-            return 'background-color: #f8d7da'  # light red
+            return 'background-color: #ffe0e6; color: #cc0033; font-weight: bold;'  # Soft pink background, dark red text
         return ''
 
+    def highlight_flag_count(val):
+        """Highlights the Total_Flags column."""
+        if val > 0:
+            return 'background-color: #ffcccc; font-weight: bold;' # Brighter red for the count
+        return ''
+    
+    def highlight_percentage(val):
+        """Highlights the Error_Percentage column."""
+        if val > 0:
+            return 'background-color: #ffcccc; font-weight: bold;'
+        return ''
+        
+    def format_percentage(val):
+        """Formats the percentage column."""
+        return f'{val:.1f}%' if pd.notna(val) else ''
+
+    # Clean up column names for display
+    display_df.rename(columns={
+        LGA_COL: 'LGA',
+        WARD_COL: 'Ward',
+        COMMUNITY_COL: 'Community',
+        'Total_Flags': 'Total Flags',
+        'Error_Percentage': 'Error %',
+        '_submission__uuid': 'Submission UUID'
+    }, inplace=True)
+    
+    # Apply styling
+    styled_df = display_df[
+        ['Research_Assistant', 'LGA', 'Ward', 'Community', 'Submission UUID', 'QC_Issues', 'Total Flags', 'Error %', 'Duplicate_Household', 'Duplicate_Mother', 'Duplicate_Child']
+    ].style \
+    .applymap(highlight_errors, subset=['QC_Issues']) \
+    .applymap(highlight_flag_count, subset=['Total Flags']) \
+    .applymap(highlight_percentage, subset=['Error %']) \
+    .format({'Error %': format_percentage})
+
     st.dataframe(
-        display_df[[
-            "Research_Assistant",
-            '_submission__uuid',
-            'QC_Issues',
-            'Total_Flags',
-            'Error_Percentage',
-            'Duplicate_Household',
-            'Duplicate_Mother',
-            'Duplicate_Child'
-        ]].style.applymap(highlight_errors, subset=['QC_Issues']),
+        styled_df,
         use_container_width=True,
         height=500
     )
 
-    # CSS
-    st.markdown(
-        """
-        <style>
-        .stDataFrame, .stTable {
-            width: 100% !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
-    st.success("✅ QC Dashboard Updated with Filters, KPIs & Error Analytics")
+    st.success("✅ QC Dashboard Updated. The main title is now in pure black.")
 
 
-# ---------------- FORCE REFRESH BUTTON ----------------
-if 'refresh' not in st.session_state:
-    st.session_state.refresh = False
-
-if st.sidebar.button("🔄 Force Refresh Data"):
-    st.cache_data.clear()
-    st.session_state.refresh = True
+# ---------------- FORCE REFRESH BUTTON (Moved to sidebar for UX) ----------------
+with st.sidebar:
+    st.markdown("---")
+    if st.button("🔄 Force Refresh Data", help="Clears cache and reloads all data from KoBo Toolbox."):
+        st.cache_data.clear()
+        st.session_state.refresh = True
 
 if st.session_state.refresh:
     st.session_state.refresh = False
-    run_dashboard()  # Force reload
+    st.rerun() 
 else:
     run_dashboard()
