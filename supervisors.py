@@ -280,6 +280,13 @@ def run_dashboard():
     RA_COL = "Type in your Name"
     DATE_COL = "start"
 
+    # --- NEW: Identify the Consent Date column for merging ---
+    CONSENT_DATE_COL_RAW = find_column_with_suffix(df_mortality, "consent_date")
+    if not CONSENT_DATE_COL_RAW:
+        # Fallback to the submission start time as a proxy for the consent/interview date
+        CONSENT_DATE_COL_RAW = DATE_COL 
+    # --------------------------------------------------------
+
     # --- Improved Sidebar Layout (UX) ---
     with st.sidebar:
         st.header("Data Filters") 
@@ -380,8 +387,20 @@ def run_dashboard():
     # Create flags for duplicates
     display_df = filtered_df.copy()
     
-    dupe_df = filtered_final[['_uuid', LGA_COL, WARD_COL, COMMUNITY_COL]].rename(columns={'_uuid': '_submission__uuid'})
+    # --- MODIFICATION: Added 'unique_code' AND CONSENT_DATE_COL_RAW to the merge columns ---
+    dupe_cols = ['_uuid', 'unique_code', CONSENT_DATE_COL_RAW, LGA_COL, WARD_COL, COMMUNITY_COL]
+    
+    # Filter dupe_cols to ensure only columns present in filtered_final are used
+    present_dupe_cols = [col for col in dupe_cols if col in filtered_final.columns]
+
+    dupe_df = filtered_final[present_dupe_cols].rename(columns={'_uuid': '_submission__uuid'})
+    
+    # Format the date column before merging for cleaner display
+    if CONSENT_DATE_COL_RAW in dupe_df.columns and pd.api.types.is_datetime64_any_dtype(dupe_df[CONSENT_DATE_COL_RAW]):
+        dupe_df[CONSENT_DATE_COL_RAW] = dupe_df[CONSENT_DATE_COL_RAW].dt.strftime('%Y-%m-%d')
+    
     display_df = display_df.merge(dupe_df, on="_submission__uuid", how="left")
+    # ----------------------------------------------------------------------------------------
     
     # Recalculate duplicates markers for display (keeping original functionality)
     unique_codes = filtered_final["unique_code"].value_counts()
@@ -439,12 +458,15 @@ def run_dashboard():
         COMMUNITY_COL: 'Community',
         'Total_Flags': 'Total Flags',
         'Error_Percentage': 'Error %',
-        '_submission__uuid': 'Submission UUID'
+        '_submission__uuid': 'Submission UUID',
+        'unique_code': 'Unique Code',
+        CONSENT_DATE_COL_RAW: 'Date of Consent' # --- MODIFICATION: Added rename for the new column ---
     }, inplace=True)
     
     # Apply styling
+    # --- MODIFICATION: Added 'Date of Consent' to the list of displayed columns ---
     styled_df = display_df[
-        ['Research_Assistant', 'LGA', 'Ward', 'Community', 'Submission UUID', 'QC_Issues', 'Total Flags', 'Error %', 'Duplicate_Household', 'Duplicate_Mother', 'Duplicate_Child']
+        ['Research_Assistant', 'Unique Code', 'Date of Consent', 'LGA', 'Ward', 'Community', 'Submission UUID', 'QC_Issues', 'Total Flags', 'Error %', 'Duplicate_Household', 'Duplicate_Mother', 'Duplicate_Child']
     ].style \
     .applymap(highlight_errors, subset=['QC_Issues']) \
     .applymap(highlight_flag_count, subset=['Total Flags']) \
