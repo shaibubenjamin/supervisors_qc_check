@@ -273,17 +273,17 @@ def run_dashboard():
     if df_females.empty or df_mortality.empty or df_preg.empty:
         st.stop()
 
-    # Filters
+    # Filters and Columns
     LGA_COL = "Confirm your LGA"
     WARD_COL = "Confirm your ward"
     COMMUNITY_COL = "Confirm your community"
     RA_COL = "Type in your Name"
     DATE_COL = "start"
+    VALIDATION_COL = "_validation_status" # Column for the new filter/display
 
-    # --- NEW: Identify the Consent Date column for merging ---
+    # --- Identify the Consent Date column for merging ---
     CONSENT_DATE_COL_RAW = find_column_with_suffix(df_mortality, "consent_date")
     if not CONSENT_DATE_COL_RAW:
-        # Fallback to the submission start time as a proxy for the consent/interview date
         CONSENT_DATE_COL_RAW = DATE_COL 
     # --------------------------------------------------------
 
@@ -315,9 +315,17 @@ def run_dashboard():
                 df = df[df[DATE_COL].dt.date == selected_date]
             return df
 
-        # Apply filters
+        # Apply spatial and RA filters
         filtered_final = apply_filters(df_mortality)
     # --- End Sidebar ---
+    
+    # --- NEW MODIFICATION: Fill empty validation status ---
+    if VALIDATION_COL in filtered_final.columns:
+        # Fill NaN values (empty entries) with "Validation Ongoing"
+        filtered_final[VALIDATION_COL].fillna("Validation Ongoing", inplace=True)
+        # Exclude 'Not Approved' entries
+        filtered_final = filtered_final[filtered_final[VALIDATION_COL] != "Not Approved"]
+    # ----------------------------------------------------------------------
 
 
     submission_ids = filtered_final['_uuid'].unique()
@@ -387,8 +395,8 @@ def run_dashboard():
     # Create flags for duplicates
     display_df = filtered_df.copy()
     
-    # --- MODIFICATION: Added 'unique_code' AND CONSENT_DATE_COL_RAW to the merge columns ---
-    dupe_cols = ['_uuid', 'unique_code', CONSENT_DATE_COL_RAW, LGA_COL, WARD_COL, COMMUNITY_COL]
+    # --- MODIFICATION: Added 'unique_code', CONSENT_DATE_COL_RAW, and VALIDATION_COL to the merge columns ---
+    dupe_cols = ['_uuid', 'unique_code', CONSENT_DATE_COL_RAW, VALIDATION_COL, LGA_COL, WARD_COL, COMMUNITY_COL]
     
     # Filter dupe_cols to ensure only columns present in filtered_final are used
     present_dupe_cols = [col for col in dupe_cols if col in filtered_final.columns]
@@ -460,13 +468,14 @@ def run_dashboard():
         'Error_Percentage': 'Error %',
         '_submission__uuid': 'Submission UUID',
         'unique_code': 'Unique Code',
-        CONSENT_DATE_COL_RAW: 'Date of Consent' # --- MODIFICATION: Added rename for the new column ---
+        CONSENT_DATE_COL_RAW: 'Date of Consent',
+        VALIDATION_COL: 'Validation Status'
     }, inplace=True)
     
     # Apply styling
-    # --- MODIFICATION: Added 'Date of Consent' to the list of displayed columns ---
+    # --- MODIFICATION: Final columns to display, including new columns ---
     styled_df = display_df[
-        ['Research_Assistant', 'Unique Code', 'Date of Consent', 'LGA', 'Ward', 'Community', 'Submission UUID', 'QC_Issues', 'Total Flags', 'Error %', 'Duplicate_Household', 'Duplicate_Mother', 'Duplicate_Child']
+        ['Research_Assistant', 'Unique Code', 'Validation Status', 'Date of Consent', 'LGA', 'Ward', 'Community', 'Submission UUID', 'QC_Issues', 'Total Flags', 'Error %', 'Duplicate_Household', 'Duplicate_Mother', 'Duplicate_Child']
     ].style \
     .applymap(highlight_errors, subset=['QC_Issues']) \
     .applymap(highlight_flag_count, subset=['Total Flags']) \
