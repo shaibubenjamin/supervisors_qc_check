@@ -273,12 +273,21 @@ def run_dashboard():
     if df_females.empty or df_mortality.empty or df_preg.empty:
         st.stop()
 
-    # Filters
+    # Filters and Columns
     LGA_COL = "Confirm your LGA"
     WARD_COL = "Confirm your ward"
     COMMUNITY_COL = "Confirm your community"
     RA_COL = "Type in your Name"
     DATE_COL = "start"
+    VALIDATION_COL = "_validation_status" # Column for the new filter/display
+
+    # --- Identify the Consent Date and Unique Code column for merging ---
+    CONSENT_DATE_COL_RAW = find_column_with_suffix(df_mortality, "consent_date")
+    if not CONSENT_DATE_COL_RAW:
+        CONSENT_DATE_COL_RAW = DATE_COL 
+    
+    UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique_code") or 'unique_code'
+    # --------------------------------------------------------
 
     # --- Improved Sidebar Layout (UX) ---
     with st.sidebar:
@@ -308,9 +317,17 @@ def run_dashboard():
                 df = df[df[DATE_COL].dt.date == selected_date]
             return df
 
-        # Apply filters
+        # Apply spatial and RA filters
         filtered_final = apply_filters(df_mortality)
     # --- End Sidebar ---
+    
+    # --- NEW MODIFICATION: Fill empty validation status and apply filter ---
+    if VALIDATION_COL in filtered_final.columns:
+        # Fill NaN values (empty entries) with "Validation Ongoing"
+        filtered_final[VALIDATION_COL].fillna("Validation Ongoing", inplace=True)
+        # Exclude 'Not Approved' entries
+        filtered_final = filtered_final[filtered_final[VALIDATION_COL] != "Not Approved"]
+    # ----------------------------------------------------------------------
 
 
     submission_ids = filtered_final['_uuid'].unique()
@@ -343,7 +360,7 @@ def run_dashboard():
         cols = st.columns(6)
         
         # Duplicates (Now using custom display_qc_metric)
-        duplicate_household = filtered_final.duplicated(subset="unique_code").sum()
+        duplicate_household = filtered_final.duplicated(subset=UNIQUE_CODE_COL).sum()
         duplicate_mother = filtered_females.duplicated(subset="mother_id").sum()
         duplicate_child = filtered_preg.duplicated(subset="child_id").sum()
         
@@ -380,11 +397,23 @@ def run_dashboard():
     # Create flags for duplicates
     display_df = filtered_df.copy()
     
-    dupe_df = filtered_final[['_uuid', LGA_COL, WARD_COL, COMMUNITY_COL]].rename(columns={'_uuid': '_submission__uuid'})
+    # --- MODIFICATION: Merge in unique code, consent date, and validation status ---
+    dupe_cols = ['_uuid', UNIQUE_CODE_COL, CONSENT_DATE_COL_RAW, VALIDATION_COL, LGA_COL, WARD_COL, COMMUNITY_COL]
+    
+    # Filter dupe_cols to ensure only columns present in filtered_final are used
+    present_dupe_cols = [col for col in dupe_cols if col in filtered_final.columns]
+
+    dupe_df = filtered_final[present_dupe_cols].rename(columns={'_uuid': '_submission__uuid'})
+    
+    # Format the date column before merging for cleaner display
+    if CONSENT_DATE_COL_RAW in dupe_df.columns and pd.api.types.is_datetime64_any_dtype(dupe_df[CONSENT_DATE_COL_RAW]):
+        dupe_df[CONSENT_DATE_COL_RAW] = dupe_df[CONSENT_DATE_COL_RAW].dt.strftime('%Y-%m-%d')
+    
     display_df = display_df.merge(dupe_df, on="_submission__uuid", how="left")
+    # ----------------------------------------------------------------------------------------
     
     # Recalculate duplicates markers for display (keeping original functionality)
-    unique_codes = filtered_final["unique_code"].value_counts()
+    unique_codes = filtered_final[UNIQUE_CODE_COL].value_counts()
     duplicate_codes = unique_codes[unique_codes > 1].index
     mother_ids = filtered_females["mother_id"].value_counts()
     duplicate_mothers = mother_ids[mother_ids > 1].index
@@ -392,7 +421,7 @@ def run_dashboard():
     duplicate_children = child_ids[child_ids > 1].index
     
     display_df['Duplicate_Household'] = display_df['_submission__uuid'].apply(
-        lambda x: '🚨' if filtered_final[filtered_final['_uuid'] == x]['unique_code'].iloc[0] in duplicate_codes else ''
+        lambda x: '🚨' if filtered_final[filtered_final['_uuid'] == x][UNIQUE_CODE_COL].iloc[0] in duplicate_codes else ''
     )
     display_df['Duplicate_Mother'] = display_df['_submission__uuid'].apply(
         lambda x: '🚨' if any(filtered_females[filtered_females['_submission__uuid'] == x]['mother_id'].isin(duplicate_mothers)) else ''
@@ -439,12 +468,16 @@ def run_dashboard():
         COMMUNITY_COL: 'Community',
         'Total_Flags': 'Total Flags',
         'Error_Percentage': 'Error %',
-        '_submission__uuid': 'Submission UUID'
+        '_submission__uuid': 'Submission UUID',
+        UNIQUE_CODE_COL: 'Unique Code',
+        CONSENT_DATE_COL_RAW: 'Date of Consent',
+        VALIDATION_COL: 'Validation Status'
     }, inplace=True)
     
     # Apply styling
+    # --- MODIFICATION: Final columns to display, including new columns ---
     styled_df = display_df[
-        ['Research_Assistant', 'LGA', 'Ward', 'Community', 'Submission UUID', 'QC_Issues', 'Total Flags', 'Error %', 'Duplicate_Household', 'Duplicate_Mother', 'Duplicate_Child']
+        ['Research_Assistant', 'Unique Code', 'Validation Status', 'Date of Consent', 'LGA', 'Ward', 'Community', 'Submission UUID', 'QC_Issues', 'Total Flags', 'Error %', 'Duplicate_Household', 'Duplicate_Mother', 'Duplicate_Child']
     ].style \
     .applymap(highlight_errors, subset=['QC_Issues']) \
     .applymap(highlight_flag_count, subset=['Total Flags']) \
