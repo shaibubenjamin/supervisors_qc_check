@@ -18,7 +18,7 @@ if 'refresh' not in st.session_state:
 
 # ---------------- CONFIG ----------------
 st.set_page_config(
-    page_title="SARMAAN II QC Dashboard",
+    page_title="SARMAAN II QC Dashboard (Cluster 2)",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -112,7 +112,7 @@ st.markdown(
 
 # ---------------- DATA SOURCE ----------------
 DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/esmeUJnau3gB7WjrEnzzJ5D/data.xlsx"
-MAIN_SHEET = "mortality_pilot_cluster_two-..."
+MAIN_SHEET = "mortality_pilot_cluster_two-..." 
 FEMALES_SHEET = "female"
 PREG_SHEET = "pregnancy_history"
 
