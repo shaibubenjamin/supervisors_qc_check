@@ -8,6 +8,7 @@ import numpy as np
 import streamlit as st
 import requests
 from io import BytesIO
+import difflib # 🚨 New import for fuzzy matching
 
 # ---------------- SESSION STATE INITIALIZATION ----------------
 if 'usage_count' not in st.session_state:
@@ -124,9 +125,9 @@ def load_data():
         excel_file = BytesIO(response.content)
         data_dict = pd.read_excel(excel_file, sheet_name=None)
 
-        df_mortality = data_dict[MAIN_SHEET]
-        df_females = data_dict[FEMALES_SHEET]
-        df_preg = data_dict[PREG_SHEET] 
+        df_mortality = data_dict.get(MAIN_SHEET, pd.DataFrame())
+        df_females = data_dict.get(FEMALES_SHEET, pd.DataFrame())
+        df_preg = data_dict.get(PREG_SHEET, pd.DataFrame()) 
 
         # Ensure proper datetime for filtering
         if "start" in df_mortality.columns:
@@ -147,6 +148,41 @@ def find_column_with_suffix(df, keyword):
             return col
     return None
 
+def find_best_match_column(df, target_col_name, threshold=0.75):
+    """
+    Finds the best matching column name in the DataFrame using difflib.
+    Returns the column name if the similarity ratio meets the threshold, otherwise None.
+    """
+    if df is None or not target_col_name or df.empty:
+        return None
+
+    # 1. Check for exact match (fastest)
+    if target_col_name in df.columns:
+        return target_col_name
+
+    # 2. Use difflib.get_close_matches for fuzzy matching
+    matches = difflib.get_close_matches(
+        target_col_name, 
+        df.columns, 
+        n=1, 
+        cutoff=threshold
+    )
+    
+    if matches:
+        return matches[0]
+        
+    # 3. As a fallback, try to find a column containing the core words
+    target_words = target_col_name.lower().split()
+    for col in df.columns:
+        col_lower = col.lower()
+        # Simple check: does the column contain at least 2 of the target words?
+        if sum(word in col_lower for word in target_words) >= 2:
+            st.warning(f"⚠️ Falling back to keyword search. Closest match for '{target_col_name}' is '{col}'.")
+            return col
+            
+    st.error(f"❌ Failed to find a column matching '{target_col_name}' with a similarity of {threshold*100:.0f}% or more. Check your original column names.")
+    return None
+
 # ---------------- QC ENGINE (Functionality unchanged) ----------------
 def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     # Find important columns (may return None if not found)
@@ -159,11 +195,35 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     miscarriage_col = find_column_with_suffix(df_females, "misscarraige")
 
     # Defensive: if some female-level cols are missing, create dummy numeric columns to avoid crashes
-    for col in [c_alive_col, c_dead_col, miscarriage_col, boys_dead_col, girls_dead_col]:
-        if col not in df_females.columns:
-            df_females[col] = 0
-            if col is None:
-                pass
+    # Note: This is an internal function and doesn't need fuzzy matching, as the keyword search 
+    # for these KoBo structure elements is usually reliable.
+    
+    # List of expected female-level columns for aggregation
+    female_cols = {
+        'c_alive_col': c_alive_col,
+        'c_dead_col': c_dead_col,
+        'miscarriage_col': miscarriage_col,
+        'boys_dead_col': boys_dead_col,
+        'girls_dead_col': girls_dead_col
+    }
+
+    # Ensure columns exist or create dummy columns
+    for name, col in female_cols.items():
+        if col is None:
+            # Create a safe, unique dummy column name if the original was not found
+            dummy_col = f'_{name}_dummy'
+            df_females[dummy_col] = 0
+            female_cols[name] = dummy_col # Use the dummy name
+        elif col not in df_females.columns:
+             # Should not happen if find_column_with_suffix works, but for safety
+             df_females[col] = 0
+
+
+    # Reassign variables using the (potentially dummy) column names
+    c_alive_col, c_dead_col, miscarriage_col, boys_dead_col, girls_dead_col = \
+        female_cols['c_alive_col'], female_cols['c_dead_col'], female_cols['miscarriage_col'], \
+        female_cols['boys_dead_col'], female_cols['girls_dead_col']
+
 
     # Aggregate females per household
     females_agg = df_females.groupby('_submission__uuid').agg({
@@ -203,11 +263,11 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     qc_rows = []
     for _, row in merged.iterrows():
         errors = []
-        if c_alive_col and c_alive_col in row and int(row[c_alive_col]) != int(row['Born_Alive']):
+        if c_alive_col and int(row[c_alive_col]) != int(row['Born_Alive']):
             errors.append("Born Alive mismatch")
-        if miscarriage_col and miscarriage_col in row and int(row[miscarriage_col]) != int(row['Miscarriage_Abortion']):
+        if miscarriage_col and int(row[miscarriage_col]) != int(row['Miscarriage_Abortion']):
             errors.append("Miscarrage mismatch")
-        if c_dead_col and c_dead_col in row and int(row[c_dead_col]) != int(row['Later_Died']):
+        if c_dead_col and int(row[c_dead_col]) != int(row['Later_Died']):
             errors.append("Born Alive but Later Died mismatch")
         qc_rows.append({
             "_submission__uuid": row['_submission__uuid'],
@@ -273,13 +333,27 @@ def run_dashboard():
     if df_females.empty or df_mortality.empty or df_preg.empty:
         st.stop()
 
-    # Filters and Columns
-    LGA_COL = "Confirm your LGA"
-    WARD_COL = "Confirm your ward"
-    COMMUNITY_COL = "Confirm your community"
-    RA_COL = "Type in your Name"
+    # 🚨 DYNAMIC COLUMN IDENTIFICATION using Fuzzy Matching 
+    # Target Names for filtering
+    LGA_COL_TARGET = "Confirm your LGA"
+    WARD_COL_TARGET = "Confirm your ward"
+    COMMUNITY_COL_TARGET = "Confirm your community"
+    RA_COL_TARGET = "Type in your Name"
+    
+    # Find the actual column names (threshold=0.75 for strict matching)
+    LGA_COL = find_best_match_column(df_mortality, LGA_COL_TARGET)
+    WARD_COL = find_best_match_column(df_mortality, WARD_COL_TARGET)
+    COMMUNITY_COL = find_best_match_column(df_mortality, COMMUNITY_COL_TARGET)
+    RA_COL = find_best_match_column(df_mortality, RA_COL_TARGET)
+
+    # Emergency stop if essential columns are not found
+    if not all([LGA_COL, WARD_COL, COMMUNITY_COL, RA_COL]):
+        st.error("❌ **Critical Error:** Failed to dynamically find one or more required columns (LGA, Ward, Community, or RA Name). Please check the data source column names and the spelling of the targets in the code.")
+        st.stop()
+        
+    # Other column definitions
     DATE_COL = "start"
-    VALIDATION_COL = "_validation_status" # Column for the new filter/display
+    VALIDATION_COL = "_validation_status"
 
     # --- Identify the Consent Date and Unique Code column for merging ---
     CONSENT_DATE_COL_RAW = find_column_with_suffix(df_mortality, "consent_date")
@@ -292,25 +366,30 @@ def run_dashboard():
     # --- Improved Sidebar Layout (UX) ---
     with st.sidebar:
         st.header("Data Filters") 
+        st.caption(f"LGA: `{LGA_COL}` | RA: `{RA_COL}`")
         st.markdown("---")
         
-        # Define filter function (unchanged)
+        # Define filter function (using dynamically found column names)
         def apply_filters(df):
             selected_lga = st.selectbox("LGA", ["All"] + sorted(df[LGA_COL].dropna().unique()))
             if selected_lga != "All":
                 df = df[df[LGA_COL] == selected_lga]
+                
             ward_options = ["All"] + sorted(df[WARD_COL].dropna().unique())
             selected_ward = st.selectbox("Ward", ward_options)
             if selected_ward != "All":
                 df = df[df[WARD_COL] == selected_ward]
+                
             community_options = ["All"] + sorted(df[COMMUNITY_COL].dropna().unique())
             selected_community = st.selectbox("Community", community_options)
             if selected_community != "All":
                 df = df[df[COMMUNITY_COL] == selected_community]
+                
             ra_options = ["All"] + sorted(df[RA_COL].dropna().unique())
             selected_ra = st.selectbox("Research Assistant", ra_options) # Renamed for clarity
             if selected_ra != "All":
                 df = df[df[RA_COL] == selected_ra]
+                
             unique_dates = ["All"] + sorted(df[DATE_COL].dropna().dt.date.unique())
             selected_date = st.selectbox("Collection Date", unique_dates) # Renamed for brevity
             if selected_date != "All":
@@ -333,6 +412,7 @@ def run_dashboard():
     submission_ids = filtered_final['_uuid'].unique()
     filtered_females = df_females[df_females['_submission__uuid'].isin(submission_ids)]
     filtered_preg = df_preg[df_preg['_submission__uuid'].isin(submission_ids)]
+    # Note: df_qc uses original, unfiltered data to generate all flags, then filters down
     df_qc = generate_qc_dataframe(df_mortality, df_females, df_preg)
     filtered_df = df_qc[df_qc['_submission__uuid'].isin(filtered_final['_uuid'])]
 
@@ -461,7 +541,7 @@ def run_dashboard():
         """Formats the percentage column."""
         return f'{val:.1f}%' if pd.notna(val) else ''
 
-    # Clean up column names for display
+    # Clean up column names for display (using dynamically found column names)
     display_df.rename(columns={
         LGA_COL: 'LGA',
         WARD_COL: 'Ward',
