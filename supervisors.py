@@ -8,7 +8,7 @@ import numpy as np
 import streamlit as st
 import requests
 from io import BytesIO
-import difflib # 🚨 Added for fuzzy column matching
+import difflib # 🚨 New import for fuzzy matching
 
 # ---------------- SESSION STATE INITIALIZATION ----------------
 if 'usage_count' not in st.session_state:
@@ -111,8 +111,7 @@ st.markdown(
 
 
 # ---------------- DATA SOURCE ----------------
-# 🚨 UPDATED DATA URL for Cluster 2
-DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/esdRJA8rZjSFXDi3o3adous/data.xlsx"
+DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/esmeUJnau3gB7WjrEnzzJ5D/data.xlsx"
 MAIN_SHEET = "mortality_pilot_cluster_two-..."
 FEMALES_SHEET = "female"
 PREG_SHEET = "pregnancy_history"
@@ -126,7 +125,6 @@ def load_data():
         excel_file = BytesIO(response.content)
         data_dict = pd.read_excel(excel_file, sheet_name=None)
 
-        # Use .get() for safety in case sheet names are slightly off
         df_mortality = data_dict.get(MAIN_SHEET, pd.DataFrame())
         df_females = data_dict.get(FEMALES_SHEET, pd.DataFrame())
         df_preg = data_dict.get(PREG_SHEET, pd.DataFrame()) 
@@ -143,14 +141,13 @@ def load_data():
 # ---------------- HELPER ----------------
 def find_column_with_suffix(df, keyword):
     """Return first column name containing keyword (case-insensitive), or None."""
-    if df is None or df.empty:
+    if df is None:
         return None
     for col in df.columns:
         if keyword.lower() in col.lower():
             return col
     return None
 
-# 🚨 NEW FUZZY MATCHING HELPER
 def find_best_match_column(df, target_col_name, threshold=0.75):
     """
     Finds the best matching column name in the DataFrame using difflib.
@@ -159,7 +156,11 @@ def find_best_match_column(df, target_col_name, threshold=0.75):
     if df is None or not target_col_name or df.empty:
         return None
 
-    # 1. Use difflib.get_close_matches for fuzzy matching
+    # 1. Check for exact match (fastest)
+    if target_col_name in df.columns:
+        return target_col_name
+
+    # 2. Use difflib.get_close_matches for fuzzy matching
     matches = difflib.get_close_matches(
         target_col_name, 
         df.columns, 
@@ -170,7 +171,7 @@ def find_best_match_column(df, target_col_name, threshold=0.75):
     if matches:
         return matches[0]
         
-    # 2. Fallback to finding a column containing the core words
+    # 3. As a fallback, try to find a column containing the core words
     target_words = target_col_name.lower().split()
     for col in df.columns:
         col_lower = col.lower()
@@ -179,9 +180,8 @@ def find_best_match_column(df, target_col_name, threshold=0.75):
             st.warning(f"⚠️ Falling back to keyword search. Closest match for '{target_col_name}' is '{col}'.")
             return col
             
-    st.error(f"❌ Failed to find a column matching '{target_col_name}' with a similarity of {threshold*100:.0f}% or more.")
+    st.error(f"❌ Failed to find a column matching '{target_col_name}' with a similarity of {threshold*100:.0f}% or more. Check your original column names.")
     return None
-
 
 # ---------------- QC ENGINE (Functionality unchanged) ----------------
 def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
@@ -193,30 +193,37 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     c_alive_col = find_column_with_suffix(df_females, "c_alive")
     c_dead_col = find_column_with_suffix(df_females, "c_dead")
     miscarriage_col = find_column_with_suffix(df_females, "misscarraige")
-    
-    # Store dynamic names for use inside the function
-    female_cols = {
-        'c_alive': c_alive_col,
-        'c_dead': c_dead_col,
-        'miscarriage': miscarriage_col,
-        'boys_dead': boys_dead_col,
-        'girls_dead': girls_dead_col
-    }
 
     # Defensive: if some female-level cols are missing, create dummy numeric columns to avoid crashes
-    for key, col in female_cols.items():
-        if col is None or col not in df_females.columns:
+    # Note: This is an internal function and doesn't need fuzzy matching, as the keyword search 
+    # for these KoBo structure elements is usually reliable.
+    
+    # List of expected female-level columns for aggregation
+    female_cols = {
+        'c_alive_col': c_alive_col,
+        'c_dead_col': c_dead_col,
+        'miscarriage_col': miscarriage_col,
+        'boys_dead_col': boys_dead_col,
+        'girls_dead_col': girls_dead_col
+    }
+
+    # Ensure columns exist or create dummy columns
+    for name, col in female_cols.items():
+        if col is None:
             # Create a safe, unique dummy column name if the original was not found
-            dummy_col = f'_{key}_dummy'
+            dummy_col = f'_{name}_dummy'
             df_females[dummy_col] = 0
-            female_cols[key] = dummy_col # Use the dummy name
+            female_cols[name] = dummy_col # Use the dummy name
+        elif col not in df_females.columns:
+             # Should not happen if find_column_with_suffix works, but for safety
+             df_females[col] = 0
+
 
     # Reassign variables using the (potentially dummy) column names
-    c_alive_col = female_cols['c_alive']
-    c_dead_col = female_cols['c_dead']
-    miscarriage_col = female_cols['miscarriage']
-    boys_dead_col = female_cols['boys_dead']
-    girls_dead_col = female_cols['girls_dead']
+    c_alive_col, c_dead_col, miscarriage_col, boys_dead_col, girls_dead_col = \
+        female_cols['c_alive_col'], female_cols['c_dead_col'], female_cols['miscarriage_col'], \
+        female_cols['boys_dead_col'], female_cols['girls_dead_col']
+
 
     # Aggregate females per household
     females_agg = df_females.groupby('_submission__uuid').agg({
@@ -230,10 +237,10 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
 
     # Pregnancy-level aggregation
     preg = df_preg_history.copy()
-    if outcome_col is None or outcome_col not in preg.columns:
+    if outcome_col not in preg.columns:
         preg['_outcome_dummy'] = np.nan
         outcome_col = '_outcome_dummy'
-    if still_alive_col is None or still_alive_col not in preg.columns:
+    if still_alive_col not in preg.columns:
         preg['_still_alive_dummy'] = np.nan
         still_alive_col = '_still_alive_dummy'
 
@@ -256,11 +263,11 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     qc_rows = []
     for _, row in merged.iterrows():
         errors = []
-        if int(row[c_alive_col]) != int(row['Born_Alive']):
+        if c_alive_col and int(row[c_alive_col]) != int(row['Born_Alive']):
             errors.append("Born Alive mismatch")
-        if int(row[miscarriage_col]) != int(row['Miscarriage_Abortion']):
+        if miscarriage_col and int(row[miscarriage_col]) != int(row['Miscarriage_Abortion']):
             errors.append("Miscarrage mismatch")
-        if int(row[c_dead_col]) != int(row['Later_Died']):
+        if c_dead_col and int(row[c_dead_col]) != int(row['Later_Died']):
             errors.append("Born Alive but Later Died mismatch")
         qc_rows.append({
             "_submission__uuid": row['_submission__uuid'],
@@ -288,11 +295,13 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
 
 # ---------------- MAIN DASHBOARD FUNCTION ----------------
 
+# Helper function for consistent QC Metric display (per user request)
 def display_qc_metric(col_obj, label, value):
     """Displays a QC metric with '✅' if value = 0, or '🚫' and red text if value > 0."""
     icon = "✅" if value == 0 else "🚫"
     color = "#333333" if value == 0 else "#D32F2F" # Dark text for good, Red for error
     
+    # Use HTML to display the icon, label, and value clearly
     col_obj.markdown(
         f"""
         <p class="custom-metric-label">
@@ -339,27 +348,25 @@ def run_dashboard():
 
     # Emergency stop if essential columns are not found
     if not all([LGA_COL, WARD_COL, COMMUNITY_COL, RA_COL]):
-        st.error("❌ **Critical Error:** Failed to dynamically find one or more required columns (LGA, Ward, Community, or RA Name). The dashboard cannot proceed.")
+        st.error("❌ **Critical Error:** Failed to dynamically find one or more required columns (LGA, Ward, Community, or RA Name). Please check the data source column names and the spelling of the targets in the code.")
         st.stop()
         
     # Other column definitions
     DATE_COL = "start"
+    VALIDATION_COL = "_validation_status"
 
     # --- Identify the Consent Date and Unique Code column for merging ---
     CONSENT_DATE_COL_RAW = find_column_with_suffix(df_mortality, "consent_date")
     if not CONSENT_DATE_COL_RAW:
         CONSENT_DATE_COL_RAW = DATE_COL 
     
-    # Assume 'unique_code' is present or we rely on KoBo's UUIDs if it's not.
-    # We will use the static name 'unique_code' here for duplicate checking as it is standard in the export
-    UNIQUE_CODE_COL = 'unique_code' 
+    UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique_code") or 'unique_code'
     # --------------------------------------------------------
 
     # --- Improved Sidebar Layout (UX) ---
     with st.sidebar:
         st.header("Data Filters") 
-        st.caption(f"LGA Column: `{LGA_COL}`")
-        st.caption(f"RA Column: `{RA_COL}`")
+        st.caption(f"LGA: `{LGA_COL}` | RA: `{RA_COL}`")
         st.markdown("---")
         
         # Define filter function (using dynamically found column names)
@@ -379,35 +386,45 @@ def run_dashboard():
                 df = df[df[COMMUNITY_COL] == selected_community]
                 
             ra_options = ["All"] + sorted(df[RA_COL].dropna().unique())
-            selected_ra = st.selectbox("Research Assistant", ra_options)
+            selected_ra = st.selectbox("Research Assistant", ra_options) # Renamed for clarity
             if selected_ra != "All":
                 df = df[df[RA_COL] == selected_ra]
                 
             unique_dates = ["All"] + sorted(df[DATE_COL].dropna().dt.date.unique())
-            selected_date = st.selectbox("Collection Date", unique_dates) 
+            selected_date = st.selectbox("Collection Date", unique_dates) # Renamed for brevity
             if selected_date != "All":
                 df = df[df[DATE_COL].dt.date == selected_date]
             return df
 
-        # Apply filters
+        # Apply spatial and RA filters
         filtered_final = apply_filters(df_mortality)
     # --- End Sidebar ---
+    
+    # --- NEW MODIFICATION: Fill empty validation status and apply filter ---
+    if VALIDATION_COL in filtered_final.columns:
+        # Fill NaN values (empty entries) with "Validation Ongoing"
+        filtered_final[VALIDATION_COL].fillna("Validation Ongoing", inplace=True)
+        # Exclude 'Not Approved' entries
+        filtered_final = filtered_final[filtered_final[VALIDATION_COL] != "Not Approved"]
+    # ----------------------------------------------------------------------
 
 
     submission_ids = filtered_final['_uuid'].unique()
     filtered_females = df_females[df_females['_submission__uuid'].isin(submission_ids)]
     filtered_preg = df_preg[df_preg['_submission__uuid'].isin(submission_ids)]
+    # Note: df_qc uses original, unfiltered data to generate all flags, then filters down
     df_qc = generate_qc_dataframe(df_mortality, df_females, df_preg)
     filtered_df = df_qc[df_qc['_submission__uuid'].isin(filtered_final['_uuid'])]
 
 
     # --- Improved Header and Operational Metrics (KPI CARDS) ---
-    st.markdown('<div class="big-title">SARMAAN II - QC Dashboard (Cluster 2)</div>', unsafe_allow_html=True)
+    # The title is styled via the CSS class .big-title, which now uses the pure black color
+    st.markdown('<div class="big-title">SARMAAN II - QC Dashboard</div>', unsafe_allow_html=True)
     st.caption("Data Quality Control and Monitoring")
     
     st.subheader("🎯 Operational Metrics")
     
-    with st.container(border=True): 
+    with st.container(border=True): # Container for visual grouping
         cols = st.columns(4)
         cols[0].metric("Total Households Reached", f"{filtered_final['_uuid'].nunique():,}", help="Unique household submissions.")
         cols[1].metric("Active Enumerators", filtered_final[RA_COL].nunique(), help="Number of RAs who submitted data for the current filter.")
@@ -422,7 +439,7 @@ def run_dashboard():
     with st.container(border=True):
         cols = st.columns(6)
         
-        # Duplicates (Using static 'unique_code' which is typical for KoBo exports)
+        # Duplicates (Now using custom display_qc_metric)
         duplicate_household = filtered_final.duplicated(subset=UNIQUE_CODE_COL).sum()
         duplicate_mother = filtered_females.duplicated(subset="mother_id").sum()
         duplicate_child = filtered_preg.duplicated(subset="child_id").sum()
@@ -452,7 +469,7 @@ def run_dashboard():
     st.bar_chart(
         error_by_ra.set_index("Research_Assistant"), 
         use_container_width=True, 
-        color="#D32F2F" 
+        color="#D32F2F" # Error color (kept red for errors/flags)
     )
 
     st.subheader("📋 Detailed Error Records")
@@ -460,9 +477,10 @@ def run_dashboard():
     # Create flags for duplicates
     display_df = filtered_df.copy()
     
-    # --- Merge in dynamic column data and date ---
-    dupe_cols = ['_uuid', UNIQUE_CODE_COL, CONSENT_DATE_COL_RAW, LGA_COL, WARD_COL, COMMUNITY_COL]
+    # --- MODIFICATION: Merge in unique code, consent date, and validation status ---
+    dupe_cols = ['_uuid', UNIQUE_CODE_COL, CONSENT_DATE_COL_RAW, VALIDATION_COL, LGA_COL, WARD_COL, COMMUNITY_COL]
     
+    # Filter dupe_cols to ensure only columns present in filtered_final are used
     present_dupe_cols = [col for col in dupe_cols if col in filtered_final.columns]
 
     dupe_df = filtered_final[present_dupe_cols].rename(columns={'_uuid': '_submission__uuid'})
@@ -504,13 +522,13 @@ def run_dashboard():
     def highlight_errors(val):
         """Highlights the QC Issues column."""
         if val != "No Errors":
-            return 'background-color: #ffe0e6; color: #cc0033; font-weight: bold;'
+            return 'background-color: #ffe0e6; color: #cc0033; font-weight: bold;'  # Soft pink background, dark red text
         return ''
 
     def highlight_flag_count(val):
         """Highlights the Total_Flags column."""
         if val > 0:
-            return 'background-color: #ffcccc; font-weight: bold;'
+            return 'background-color: #ffcccc; font-weight: bold;' # Brighter red for the count
         return ''
     
     def highlight_percentage(val):
@@ -532,12 +550,14 @@ def run_dashboard():
         'Error_Percentage': 'Error %',
         '_submission__uuid': 'Submission UUID',
         UNIQUE_CODE_COL: 'Unique Code',
-        CONSENT_DATE_COL_RAW: 'Date of Consent'
+        CONSENT_DATE_COL_RAW: 'Date of Consent',
+        VALIDATION_COL: 'Validation Status'
     }, inplace=True)
     
     # Apply styling
+    # --- MODIFICATION: Final columns to display, including new columns ---
     styled_df = display_df[
-        ['Research_Assistant', 'Unique Code', 'Date of Consent', 'LGA', 'Ward', 'Community', 'Submission UUID', 'QC_Issues', 'Total Flags', 'Error %', 'Duplicate_Household', 'Duplicate_Mother', 'Duplicate_Child']
+        ['Research_Assistant', 'Unique Code', 'Validation Status', 'Date of Consent', 'LGA', 'Ward', 'Community', 'Submission UUID', 'QC_Issues', 'Total Flags', 'Error %', 'Duplicate_Household', 'Duplicate_Mother', 'Duplicate_Child']
     ].style \
     .applymap(highlight_errors, subset=['QC_Issues']) \
     .applymap(highlight_flag_count, subset=['Total Flags']) \
