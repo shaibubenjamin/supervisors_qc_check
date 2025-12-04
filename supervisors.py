@@ -46,7 +46,7 @@ st.markdown(
 # --- END: Custom CSS ---
 
 # ---------------- DATA SOURCE ----------------
-DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/esZsreaSGHjKk2njgSzBoog/data.xlsx"
+DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/esK39EhRdJ3yz4wXMsKrJiC/data.xlsx"
 MAIN_SHEET = "mortality_pilot_cluster_two-..."
 FEMALES_SHEET = "female"
 PREG_SHEET = "pregnancy_history"
@@ -124,6 +124,21 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
         female_cols['c_alive_col'], female_cols['c_dead_col'], female_cols['miscarriage_col'], \
         female_cols['boys_dead_col'], female_cols['girls_dead_col']
 
+    # --- NEW: Identify Duplicates based on key identifiers ---
+    UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique_code") or 'unique_code'
+    
+    # Identify duplicate submissions (keep=False marks all duplicates as True)
+    # The _uuid/submission__uuid is used to link the error back to the main survey submission
+    mortality_dupes = df_mortality[df_mortality.duplicated(subset=UNIQUE_CODE_COL, keep=False)]
+    females_dupes = df_females[df_females.duplicated(subset="mother_id", keep=False)]
+    preg_dupes = df_preg_history[df_preg_history.duplicated(subset="child_id", keep=False)]
+
+    # Get the UUIDs of the submissions that contain a duplicate record
+    dupe_household_uuids = mortality_dupes['_uuid'].unique()
+    dupe_mother_uuids = females_dupes['_submission__uuid'].unique()
+    dupe_child_uuids = preg_dupes['_submission__uuid'].unique()
+    # ---------------------------------------------------------
+    
     females_agg = df_females.groupby('_submission__uuid').agg({
         c_alive_col: 'sum',
         c_dead_col: 'sum',
@@ -159,14 +174,26 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     qc_rows = []
     for _, row in merged.iterrows():
         errors = []
+        uuid = row['_submission__uuid']
+        
+        # Internal Consistency Errors
         if c_alive_col and int(row[c_alive_col]) != int(row['Born_Alive']):
             errors.append("Born Alive mismatch")
         if miscarriage_col and int(row[miscarriage_col]) != int(row['Miscarriage_Abortion']):
             errors.append("Miscarrage mismatch")
         if c_dead_col and int(row[c_dead_col]) != int(row['Later_Died']):
             errors.append("Born Alive but Later Died mismatch")
+            
+        # Duplication Errors (NEW ADDITION)
+        if uuid in dupe_household_uuids:
+            errors.append("Duplicate Household")
+        if uuid in dupe_mother_uuids:
+            errors.append("Duplicate Mother")
+        if uuid in dupe_child_uuids:
+            errors.append("Duplicate Child")
+            
         qc_rows.append({
-            "_submission__uuid": row['_submission__uuid'],
+            "_submission__uuid": uuid,
             "QC_Issues": "; ".join(errors) if errors else "No Errors",
             "Total_Flags": len(errors)
         })
@@ -185,7 +212,8 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
         qc_df["Research_Assistant"] = np.nan
 
     qc_df.drop(columns=["_uuid"], inplace=True, errors='ignore')
-    qc_df["Error_Percentage"] = (qc_df["Total_Flags"] / 4) * 100
+    # Updated divisor to 6 (3 internal checks + 3 duplicate checks)
+    qc_df["Error_Percentage"] = (qc_df["Total_Flags"] / 6) * 100 
     return qc_df
 
 def display_qc_metric(col_obj, label, value):
@@ -271,11 +299,12 @@ def run_dashboard(df_mortality, df_females, df_preg):
     filtered_females = df_females[df_females['_submission__uuid'].isin(submission_ids)]
     filtered_preg = df_preg[df_preg['_submission__uuid'].isin(submission_ids)]
 
+    # Use the full dataframes for QC calculation, then filter by submission_ids
     df_qc = generate_qc_dataframe(df_mortality, df_females, df_preg)
     filtered_df = df_qc[df_qc['_submission__uuid'].isin(filtered_final['_uuid'])]
 
     # --- Dashboard Title & Metrics ---
-    st.markdown('<div class="big-title">SARMAAN II - QC Dashboard - Cluster 2 </div>', unsafe_allow_html=True)
+    st.markdown('<div class="big-title">SARMAAN II - QC Dashboard - Cluster1</div>', unsafe_allow_html=True)
     st.caption("Data Quality Control and Monitoring")
 
     st.subheader("🎯 Operational Metrics")
@@ -290,16 +319,25 @@ def run_dashboard(df_mortality, df_females, df_preg):
     st.subheader("🚨 Quality Control Summary")
     with st.container():
         cols = st.columns(6)
+        
+        # Recalculate Duplicates based on the filtered data for metric display
         duplicate_household = filtered_final.duplicated(subset=UNIQUE_CODE_COL).sum()
-        duplicate_mother = filtered_females.duplicated(subset="mother_id").sum()
-        duplicate_child = filtered_preg.duplicated(subset="child_id").sum()
+        # Find mother/child duplicates within the currently filtered set of submissions
+        filtered_mother_dupes = filtered_females[filtered_females['_submission__uuid'].isin(filtered_final['_uuid'])]
+        filtered_child_dupes = filtered_preg[filtered_preg['_submission__uuid'].isin(filtered_final['_uuid'])]
+        duplicate_mother = filtered_mother_dupes.duplicated(subset="mother_id").sum()
+        duplicate_child = filtered_child_dupes.duplicated(subset="child_id").sum()
+        
+        # Count the number of unique submissions flagged with each error type
         born_alive_mismatch = (filtered_df["QC_Issues"].str.contains("Born Alive mismatch")).sum()
         later_died_mismatch = (filtered_df["QC_Issues"].str.contains("Born Alive but Later Died mismatch")).sum()
         miscarriage_mismatch = (filtered_df["QC_Issues"].str.contains("Miscarrage mismatch")).sum()
-
-        display_qc_metric(cols[0], "Duplicate Household", duplicate_household)
-        display_qc_metric(cols[1], "Duplicate Mother", duplicate_mother)
-        display_qc_metric(cols[2], "Duplicate Child", duplicate_child)
+        
+        # Note: The Duplication counts here are based on the number of *submissions* flagged, 
+        # which is the most appropriate metric for the QC summary
+        display_qc_metric(cols[0], "Duplicate Household", (filtered_df["QC_Issues"].str.contains("Duplicate Household")).sum())
+        display_qc_metric(cols[1], "Duplicate Mother", (filtered_df["QC_Issues"].str.contains("Duplicate Mother")).sum())
+        display_qc_metric(cols[2], "Duplicate Child", (filtered_df["QC_Issues"].str.contains("Duplicate Child")).sum())
         display_qc_metric(cols[3], "Born Alive Mismatch", born_alive_mismatch)
         display_qc_metric(cols[4], "B.Alive, Later Died Mismatch", later_died_mismatch)
         display_qc_metric(cols[5], "Miscarriage Mismatch", miscarriage_mismatch)
@@ -317,6 +355,10 @@ def run_dashboard(df_mortality, df_females, df_preg):
     # ---------------- Detailed Error Records ----------------
     st.subheader("📋 Detailed Error Records")
     display_df = filtered_df.copy()
+    
+    # --- CRITICAL CHANGE: FILTER TO ONLY SHOW RECORDS WITH ERRORS ---
+    display_df = display_df[display_df['Total_Flags'] > 0]
+    # ---------------------------------------------------------------
 
     dupe_cols = ['_uuid', UNIQUE_CODE_COL, CONSENT_DATE_COL_RAW, VALIDATION_COL, LGA_COL, WARD_COL, COMMUNITY_COL]
     present_dupe_cols = [col for col in dupe_cols if col in filtered_final.columns]
@@ -336,9 +378,19 @@ def run_dashboard(df_mortality, df_females, df_preg):
         CONSENT_DATE_COL_RAW: 'Date of Consent',
         VALIDATION_COL: 'Validation Status'
     }, inplace=True)
-
-    st.dataframe(display_df, use_container_width=True, height=500)
-    st.success("✅ QC Dashboard Updated. Using exact column names now.")
+    
+    # Select and order columns for display
+    display_cols = [
+        'Submission UUID', 'Unique Code', 'Research_Assistant', 'Total Flags', 
+        'Error %', 'QC_Issues', 'LGA', 'Ward', 'Community', 'Date of Consent', 
+        'Validation Status'
+    ]
+    
+    # Ensure only existing columns are passed to the dataframe display
+    display_cols = [col for col in display_cols if col in display_df.columns]
+    
+    st.dataframe(display_df[display_cols], use_container_width=True, height=500)
+    st.success("✅ QC Dashboard Updated. Duplication checks included and table filtered to show errors only.")
 
 # ---------------- FORCE REFRESH BUTTON ----------------
 with st.sidebar:
@@ -352,4 +404,3 @@ force_refresh_flag = st.session_state.get('refresh', False) or st.session_state.
 df_mortality, df_females, df_preg = load_data(force_refresh=force_refresh_flag)
 st.session_state.refresh = False
 run_dashboard(df_mortality, df_females, df_preg)
-
