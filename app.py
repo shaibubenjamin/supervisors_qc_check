@@ -275,7 +275,7 @@ def run_dashboard(df_mortality, df_females, df_preg):
     filtered_df = df_qc[df_qc['_submission__uuid'].isin(filtered_final['_uuid'])]
 
     # --- Dashboard Title & Metrics ---
-    st.markdown('<div class="big-title">SARMAAN II - QC Dashboard</div>', unsafe_allow_html=True)
+    st.markdown('<div class="big-title">SARMAAN II - QC Dashboard - Cluster1</div>', unsafe_allow_html=True)
     st.caption("Data Quality Control and Monitoring")
 
     st.subheader("🎯 Operational Metrics")
@@ -352,3 +352,4 @@ force_refresh_flag = st.session_state.get('refresh', False) or st.session_state.
 df_mortality, df_females, df_preg = load_data(force_refresh=force_refresh_flag)
 st.session_state.refresh = False
 run_dashboard(df_mortality, df_females, df_preg)
+
