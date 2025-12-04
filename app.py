@@ -1,5 +1,5 @@
 # ================================
-# SARMAAN II UPDATED QC DASHBOARD (OPTIMIZED + FORCE REFRESH + DYNAMIC KPIs)
+# SARMAAN II UPDATED QC DASHBOARD (OPTIMIZED + FORCE REFRESH + LIVE DATA)
 # ================================
 
 from datetime import date
@@ -10,12 +10,16 @@ import requests
 from io import BytesIO
 
 # ---------------- SESSION STATE INITIALIZATION ----------------
+if 'usage_count' not in st.session_state:
+    st.session_state.usage_count = 0
 if 'refresh' not in st.session_state:
     st.session_state.refresh = False
+if 'force_refresh_trigger' not in st.session_state:
+    st.session_state.force_refresh_trigger = False
 
 # ---------------- CONFIG ----------------
 st.set_page_config(
-    page_title="SARMAAN II QC Dashboard",
+    page_title="SARMAAN II QC Dashboard CLUSTER 1",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -32,6 +36,8 @@ st.markdown(
     .st-emotion-cache-p5m854 { padding-top: 0rem; }
     .custom-metric-value { font-size: 2rem; font-weight: 600; margin-top: 0px; }
     .custom-metric-label { font-size: 0.9rem; font-weight: 600; color: #708090; margin-bottom: 0px; }
+    .usage-bar-container { padding: 5px 15px; background-color: rgb(232, 245, 233); border-radius: 0.5rem; margin-bottom: 15px; border: 1px solid rgb(76, 175, 80); display: flex; align-items: center; justify-content: space-between; }
+    .usage-text { color: rgb(76, 175, 80); font-weight: 600; font-size: 0.9rem; }
     .stSidebar .stSelectbox label { color: #333333; }
     </style>
     """,
@@ -46,8 +52,19 @@ FEMALES_SHEET = "female"
 PREG_SHEET = "pregnancy_history"
 
 # ---------------- SAFE DATA LOADER ----------------
-@st.cache_data(show_spinner="⏳ Loading and processing data... Please wait.", ttl=3600)
-def load_data():
+def load_data(force_refresh=False):
+    """
+    Load the latest data from the server.
+    If force_refresh=True, bypass cache and pull fresh data.
+    """
+    cache_key = "sarmaan_data"
+
+    if not force_refresh:
+        # Try to get cached data
+        cached = st.session_state.get(cache_key)
+        if cached is not None:
+            return cached
+
     try:
         response = requests.get(DATA_URL, timeout=60)
         response.raise_for_status()
@@ -56,14 +73,17 @@ def load_data():
 
         df_mortality = data_dict.get(MAIN_SHEET, pd.DataFrame())
         df_females = data_dict.get(FEMALES_SHEET, pd.DataFrame())
-        df_preg = data_dict.get(PREG_SHEET, pd.DataFrame()) 
+        df_preg = data_dict.get(PREG_SHEET, pd.DataFrame())
 
         if "start" in df_mortality.columns:
             df_mortality["start"] = pd.to_datetime(df_mortality["start"], errors='coerce')
 
+        # Cache the fresh data
+        st.session_state[cache_key] = (df_mortality, df_females, df_preg)
         return df_mortality, df_females, df_preg
+
     except Exception as e:
-        st.error(f"❌ Error loading workbook: {e}") 
+        st.error(f"❌ Error loading workbook: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 # ---------------- HELPER FUNCTIONS ----------------
@@ -75,10 +95,9 @@ def find_column_with_suffix(df, keyword):
             return col
     return None
 
-# QC helper
 def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     outcome_col = find_column_with_suffix(df_preg_history, "Was the baby born alive")
-    still_alive_col = find_column_with_suffix(df_preg_history, "still alive")  # Q124
+    still_alive_col = find_column_with_suffix(df_preg_history, "still alive")
     boys_dead_col = find_column_with_suffix(df_females, "boys have died")
     girls_dead_col = find_column_with_suffix(df_females, "daughters have died")
     c_alive_col = find_column_with_suffix(df_females, "c_alive")
@@ -169,7 +188,6 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     qc_df["Error_Percentage"] = (qc_df["Total_Flags"] / 4) * 100
     return qc_df
 
-# ---------------- DISPLAY HELPER ----------------
 def display_qc_metric(col_obj, label, value):
     icon = "✅" if value == 0 else "🚫"
     color = "#333333" if value == 0 else "#D32F2F"
@@ -182,8 +200,19 @@ def display_qc_metric(col_obj, label, value):
     )
 
 # ---------------- RUN DASHBOARD ----------------
-def run_dashboard():
-    df_mortality, df_females, df_preg = load_data()
+def run_dashboard(df_mortality, df_females, df_preg):
+    st.session_state.usage_count += 1
+    st.markdown(
+        f"""
+        <div class="usage-bar-container">
+            <span class="usage-text">
+                Dashboard Usage Count (Runs/Refreshes): <strong>{st.session_state.usage_count}</strong>
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
     if df_females.empty or df_mortality.empty or df_preg.empty:
         st.stop()
 
@@ -191,7 +220,7 @@ def run_dashboard():
     LGA_COL = "Confirm your LGA"
     WARD_COL = "Confirm your ward"
     COMMUNITY_COL = "Confirm your community"
-    RA_COL = "Type in your Name"  
+    RA_COL = "Type in your Name"
     DATE_COL = "start"
     VALIDATION_COL = "_validation_status"
     UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique_code") or 'unique_code'
@@ -200,6 +229,7 @@ def run_dashboard():
     # --- Sidebar Filters ---
     with st.sidebar:
         st.header("Data Filters")
+        st.caption(f"LGA: `{LGA_COL}` | RA: `{RA_COL}`")
         st.markdown("---")
 
         def apply_filters(df):
@@ -314,11 +344,11 @@ def run_dashboard():
 with st.sidebar:
     st.markdown("---")
     if st.button("🔄 Force Refresh Data"):
-        st.cache_data.clear()
         st.session_state.refresh = True
+        st.session_state.force_refresh_trigger = not st.session_state.force_refresh_trigger
 
-if st.session_state.refresh:
-    st.session_state.refresh = False
-    st.rerun()
-else:
-    run_dashboard()
+# ---------------- INITIAL LOAD ----------------
+force_refresh_flag = st.session_state.get('refresh', False) or st.session_state.get('force_refresh_trigger', False)
+df_mortality, df_females, df_preg = load_data(force_refresh=force_refresh_flag)
+st.session_state.refresh = False
+run_dashboard(df_mortality, df_females, df_preg)
