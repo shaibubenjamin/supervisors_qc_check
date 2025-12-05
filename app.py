@@ -19,7 +19,7 @@ if 'force_refresh_trigger' not in st.session_state:
 
 # ---------------- CONFIG ----------------
 st.set_page_config(
-    page_title="SARMAAN II QC Dashboard CLUSTER 2",
+    page_title="SARMAAN II QC Dashboard CLUSTER 1",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -390,7 +390,7 @@ def run_dashboard(df_mortality, df_females, df_preg):
     display_cols = [col for col in display_cols if col in display_df.columns]
     
     st.dataframe(display_df[display_cols], use_container_width=True, height=500)
-    st.success("✅ QC Dashboard Updated.")
+    st.success("✅ QC Dashboard Updated. Duplication checks included and table filtered to show errors only.")
 
 # ---------------- FORCE REFRESH BUTTON ----------------
 with st.sidebar:
@@ -404,11 +404,5 @@ force_refresh_flag = st.session_state.get('refresh', False) or st.session_state.
 df_mortality, df_females, df_preg = load_data(force_refresh=force_refresh_flag)
 st.session_state.refresh = False
 run_dashboard(df_mortality, df_females, df_preg)
-
-
-
-
-
-
 
 
