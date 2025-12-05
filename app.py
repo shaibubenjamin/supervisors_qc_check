@@ -406,4 +406,3 @@ st.session_state.refresh = False
 run_dashboard(df_mortality, df_females, df_preg)
 
 
-
