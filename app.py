@@ -405,6 +405,3 @@ df_mortality, df_females, df_preg = load_data(force_refresh=force_refresh_flag)
 st.session_state.refresh = False
 run_dashboard(df_mortality, df_females, df_preg)
 
-
-
-
