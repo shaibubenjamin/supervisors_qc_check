@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 import requests
-# IMPORTANT: Use io.StringIO for robust parsing of string data
+# IMPORTANT: Use io.BytesIO for web download and io.StringIO for string data parsing
 from io import BytesIO, StringIO 
 
 # ---------------- SESSION STATE INITIALIZATION ----------------
@@ -52,10 +52,10 @@ MAIN_SHEET = "mortality_pilot_cluster_two-..."
 FEMALES_SHEET = "female"
 PREG_SHEET = "pregnancy_history"
 
-# --- SOP Lookup Table (Cleaned for safer parsing) ---
-# NOTE: The data below has been reformatted to use consistent spaces between columns
-# for robust reading, and the use of the `sep='\t'` with `skipinitialspace=True` 
-# combined with StringIO should resolve the parsing error.
+
+# --- SOP Lookup Table (Cleaned for robust parsing) ---
+# NOTE: The data below has been formatted using consistent single tabs (\t) 
+# to resolve the previous ParserError.
 SOP_DATA = """
 lga_Label	ward_Label	settlement_Label	Community_ID
 Potiskum	Bare_Bari	Kandahar	B-11_14_1_1
@@ -161,15 +161,19 @@ Potiskum	Yerimaram	Mai_Anguwa_Sale	B-11_14_10_10
 """
 
 # Load SOP data into a DataFrame
-# CRITICAL FIX: Use StringIO and clean SOP_DATA string to ensure consistent column parsing
 try:
+    # Use StringIO to read the string data and ensure sep='\t' and skipinitialspace=True
     SOP_DF = pd.read_csv(StringIO(SOP_DATA), sep='\t', skipinitialspace=True)
+    
+    # Define expected columns for validation
+    EXPECTED_SOP_COLUMNS = ['lga_Label', 'ward_Label', 'settlement_Label', 'Community_ID']
+    
     # Validate the column names after loading
-    if list(SOP_DF.columns) != ['lga_Label', 'ward_Label', 'settlement_Label', 'Community_ID']:
-        st.error("❌ SOP Data Loading Error: Column headers were not parsed correctly. Check the tab/space delimiters in the header.")
+    if list(SOP_DF.columns) != EXPECTED_SOP_COLUMNS:
+        st.error("❌ SOP Data Loading Error: Column headers were not parsed correctly. Check the tabs/spaces in the header row.")
         SOP_COMMUNITY_MAP = {}
     else:
-        # Create a dictionary map from Community_ID to location labels
+        # Create a dictionary map from Community_ID (code) to settlement_Label (name)
         SOP_COMMUNITY_MAP = SOP_DF.set_index('Community_ID')['settlement_Label'].to_dict()
 except Exception as e:
     st.error(f"❌ Critical SOP Data Parsing Failed: {e}. Please ensure the data rows and headers are separated by a single tab.")
@@ -177,18 +181,13 @@ except Exception as e:
 
 
 # ---------------- SAFE DATA LOADER ----------------
+@st.cache_data(show_spinner="Downloading and processing latest KoboToolbox data...", ttl=600)
 def load_data(force_refresh=False):
     """
     Load the latest data from the server.
-    If force_refresh=True, bypass cache and pull fresh data.
     """
-    cache_key = "sarmaan_data"
-
-    if not force_refresh:
-        # Try to get cached data
-        cached = st.session_state.get(cache_key)
-        if cached is not None:
-            return cached
+    if force_refresh:
+        st.cache_data.clear() # Clear cache on force refresh call
 
     try:
         response = requests.get(DATA_URL, timeout=60)
@@ -203,7 +202,7 @@ def load_data(force_refresh=False):
         if "start" in df_mortality.columns:
             df_mortality["start"] = pd.to_datetime(df_mortality["start"], errors='coerce')
 
-        # --- Apply Community Code Mapping ---
+        # --- Apply Community Code Mapping (CRITICAL FIX) ---
         COMMUNITY_COL_RAW = find_column_with_suffix(df_mortality, "community")
         
         if COMMUNITY_COL_RAW in df_mortality.columns and SOP_COMMUNITY_MAP:
@@ -212,27 +211,23 @@ def load_data(force_refresh=False):
                  lambda x: SOP_COMMUNITY_MAP.get(x, x)
              )
         
-        # Cache the fresh data
-        st.session_state[cache_key] = (df_mortality, df_females, df_preg)
         return df_mortality, df_females, df_preg
 
     except Exception as e:
         st.error(f"❌ Error loading workbook: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-# ---------------- HELPER FUNCTIONS (No change needed) ----------------
+# ---------------- HELPER FUNCTIONS ----------------
 def find_column_with_suffix(df, keyword):
-    if df is None:
+    if df is None or df.empty:
         return None
     for col in df.columns:
         if keyword.lower() in col.lower():
             return col
     return None
 
-# ... (Rest of generate_qc_dataframe, display_qc_metric, and run_dashboard functions remain the same) ...
-# (The functions below are identical to the previous response, but included for completeness)
-
 def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
+    # Dynamic column finding
     outcome_col = find_column_with_suffix(df_preg_history, "Was the baby born alive")
     still_alive_col = find_column_with_suffix(df_preg_history, "still alive")
     boys_dead_col = find_column_with_suffix(df_females, "boys have died")
@@ -240,51 +235,42 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     c_alive_col = find_column_with_suffix(df_females, "c_alive")
     c_dead_col = find_column_with_suffix(df_females, "c_dead")
     miscarriage_col = find_column_with_suffix(df_females, "misscarraige")
-
+    
+    UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique_code") or 'unique_code_code'
+    
+    # Handle missing columns in sub-tables by creating dummy columns
     female_cols = {
-        'c_alive_col': c_alive_col,
-        'c_dead_col': c_dead_col,
-        'miscarriage_col': miscarriage_col,
-        'boys_dead_col': boys_dead_col,
-        'girls_dead_col': girls_dead_col
+        'c_alive_col': c_alive_col, 'c_dead_col': c_dead_col, 'miscarriage_col': miscarriage_col,
+        'boys_dead_col': boys_dead_col, 'girls_dead_col': girls_dead_col
     }
-
     for name, col in female_cols.items():
-        if col is None:
+        if col is None or col not in df_females.columns:
             dummy_col = f'_{name}_dummy'
             df_females[dummy_col] = 0
             female_cols[name] = dummy_col
-        elif col not in df_females.columns:
-            df_females[col] = 0
+    c_alive_col, c_dead_col, miscarriage_col, boys_dead_col, girls_dead_col = female_cols.values()
 
-    c_alive_col, c_dead_col, miscarriage_col, boys_dead_col, girls_dead_col = \
-        female_cols['c_alive_col'], female_cols['c_dead_col'], female_cols['miscarriage_col'], \
-        female_cols['boys_dead_col'], female_cols['girls_dead_col']
-
-    # --- NEW: Identify Duplicates based on key identifiers ---
-    UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique") or 'unique_code'
-    
-    # Identify duplicate submissions (keep=False marks all duplicates as True)
-    # The _uuid/submission__uuid is used to link the error back to the main survey submission
+    # --- Household Duplicate Check (Confirmed to use unique_code_CODE_COL) ---
     mortality_dupes = df_mortality[df_mortality.duplicated(subset=UNIQUE_CODE_COL, keep=False)]
+    
+    # Identify mother and child duplicates based on IDs (assuming mother_id and child_id are consistent)
     females_dupes = df_females[df_females.duplicated(subset="mother_id", keep=False)]
     preg_dupes = df_preg_history[df_preg_history.duplicated(subset="child_id", keep=False)]
 
-    # Get the UUIDs of the submissions that contain a duplicate record
     dupe_household_uuids = mortality_dupes['_uuid'].unique()
     dupe_mother_uuids = females_dupes['_submission__uuid'].unique()
     dupe_child_uuids = preg_dupes['_submission__uuid'].unique()
+    
     # ---------------------------------------------------------
     
+    # Aggregate female-level data
     females_agg = df_females.groupby('_submission__uuid').agg({
-        c_alive_col: 'sum',
-        c_dead_col: 'sum',
-        miscarriage_col: 'sum',
-        boys_dead_col: 'sum',
-        girls_dead_col: 'sum'
+        c_alive_col: 'sum', c_dead_col: 'sum', miscarriage_col: 'sum',
+        boys_dead_col: 'sum', girls_dead_col: 'sum'
     }).reset_index()
     females_agg['total_children_died'] = females_agg[boys_dead_col].fillna(0) + females_agg[girls_dead_col].fillna(0)
 
+    # Aggregate pregnancy history data
     preg = df_preg_history.copy()
     if outcome_col not in preg.columns:
         preg['_outcome_dummy'] = np.nan
@@ -296,6 +282,7 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     def per_submission_agg(g):
         born_alive_and_alive = ((g[outcome_col] == "Born Alive") & (g[still_alive_col] == "Yes")).sum()
         later_died = (g[still_alive_col] == "No").sum()
+        # Miscarriage and Born Dead are grouped under Miscarriage_Abortion check
         miscarriage_count = ((g[outcome_col] == "Miscarriage and Abortion") | (g[outcome_col] == "Born dead")).sum()
         born_dead_raw = (g[outcome_col] == "Born dead").sum()
         return pd.Series({
@@ -321,7 +308,7 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
         if c_dead_col and int(row[c_dead_col]) != int(row['Later_Died']):
             errors.append("Born Alive but Later Died mismatch")
             
-        # Duplication Errors (NEW ADDITION)
+        # Duplication Errors
         if uuid in dupe_household_uuids:
             errors.append("Duplicate Household")
         if uuid in dupe_mother_uuids:
@@ -379,22 +366,22 @@ def run_dashboard(df_mortality, df_females, df_preg):
     )
 
     if df_females.empty or df_mortality.empty or df_preg.empty:
-        st.stop()
+        # Display the server error from load_data and stop if dataframes are empty
+        return 
 
     # ---------------- DYNAMIC COLUMN MAPPING ----------------
     LGA_COL = find_column_with_suffix(df_mortality, "lga") or "Confirm your LGA"
     WARD_COL = find_column_with_suffix(df_mortality, "ward") or "Confirm your ward"
-    # NOTE: The value in COMMUNITY_COL now holds the NAME due to the mapping applied in load_data()
+    # This column now holds the Community NAME after the mapping in load_data()
     COMMUNITY_COL = find_column_with_suffix(df_mortality, "community") or "Confirm your community" 
     RA_COL = find_column_with_suffix(df_mortality, "name") or "Type in your Name"
     DATE_COL = "start"
     VALIDATION_COL = "_validation_status"
-    # Use 'unique' as the keyword to find the Household Unique Code column
     UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique") or 'unique_code' 
     CONSENT_DATE_COL_RAW = find_column_with_suffix(df_mortality, "consent_date") or DATE_COL
     
     # ------------------ COLUMN DISPLAY NAMES ---------------------
-    COMMUNITY_DISPLAY_NAME = "Confirm your community" # Keeps the requested display label
+    COMMUNITY_DISPLAY_NAME = "Confirm your community"
     LGA_DISPLAY_NAME = "LGA" 
     WARD_DISPLAY_NAME = "Ward" 
     RA_DISPLAY_NAME = "Enumerator Name"
@@ -413,48 +400,42 @@ def run_dashboard(df_mortality, df_females, df_preg):
         ra_filter_ok = RA_COL in df_mortality.columns
         
         def apply_filters(df):
+            df_filtered = df.copy()
             # LGA Filter
-            if not lga_filter_ok:
-                st.warning(f"⚠️ **LGA Filter Disabled:** Column '{LGA_COL}' not found.")
-            else:
-                selected_lga = st.selectbox("LGA", ["All"] + sorted(df[LGA_COL].dropna().unique()))
+            if lga_filter_ok:
+                selected_lga = st.selectbox("LGA", ["All"] + sorted(df_filtered[LGA_COL].dropna().unique()))
                 if selected_lga != "All":
-                    df = df[df[LGA_COL] == selected_lga]
+                    df_filtered = df_filtered[df_filtered[LGA_COL] == selected_lga]
 
             # Ward Filter
-            if not ward_filter_ok:
-                st.warning(f"⚠️ **Ward Filter Disabled:** Column '{WARD_COL}' not found.")
-            else:
-                selected_ward = st.selectbox("Ward", ["All"] + sorted(df[WARD_COL].dropna().unique()))
+            if ward_filter_ok:
+                selected_ward = st.selectbox("Ward", ["All"] + sorted(df_filtered[WARD_COL].dropna().unique()))
                 if selected_ward != "All":
-                    df = df[df[WARD_COL] == selected_ward]
+                    df_filtered = df_filtered[df_filtered[WARD_COL] == selected_ward]
             
-            # Community Filter - Now filtering by NAME (since mapping was applied)
-            if not community_filter_ok:
-                st.warning(f"⚠️ **Community Filter Disabled:** Column '{COMMUNITY_COL}' not found.")
-            else:
-                selected_community = st.selectbox(COMMUNITY_DISPLAY_NAME, ["All"] + sorted(df[COMMUNITY_COL].dropna().unique()))
+            # Community Filter
+            if community_filter_ok:
+                selected_community = st.selectbox(COMMUNITY_DISPLAY_NAME, ["All"] + sorted(df_filtered[COMMUNITY_COL].dropna().unique()))
                 if selected_community != "All":
-                    df = df[df[COMMUNITY_COL] == selected_community]
+                    df_filtered = df_filtered[df_filtered[COMMUNITY_COL] == selected_community]
 
             # RA Filter
-            if not ra_filter_ok:
-                st.warning(f"⚠️ **RA Filter Disabled:** Column '{RA_COL}' not found.")
-            else:
-                selected_ra = st.selectbox("Research Assistant", ["All"] + sorted(df[RA_COL].dropna().unique()))
+            if ra_filter_ok:
+                selected_ra = st.selectbox("Research Assistant", ["All"] + sorted(df_filtered[RA_COL].dropna().unique()))
                 if selected_ra != "All":
-                    df = df[df[RA_COL] == selected_ra]
+                    df_filtered = df_filtered[df_filtered[RA_COL] == selected_ra]
 
-            if DATE_COL in df.columns:
+            if DATE_COL in df_filtered.columns:
                 try:
-                    df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors='coerce')
-                    unique_dates = ["All"] + sorted(df[DATE_COL].dropna().dt.date.unique())
+                    df_filtered[DATE_COL] = pd.to_datetime(df_filtered[DATE_COL], errors='coerce')
+                    unique_dates = ["All"] + sorted(df_filtered[DATE_COL].dropna().dt.date.unique())
                     selected_date = st.selectbox("Collection Date", unique_dates)
                     if selected_date != "All":
-                        df = df[df[DATE_COL].dt.date == selected_date]
+                        df_filtered = df_filtered[df_filtered[DATE_COL].dt.date == selected_date]
                 except Exception:
-                    st.warning("⚠️ Could not parse Collection Date. Date filter disabled.")
-            return df
+                    # Silent fail if date parsing fails
+                    pass
+            return df_filtered
 
         # Store the original unfiltered data for "Not Approved" table later
         df_mortality_original = df_mortality.copy()
@@ -462,22 +443,19 @@ def run_dashboard(df_mortality, df_females, df_preg):
         # Filter the main dataframe used for metrics/QC
         filtered_final = apply_filters(df_mortality)
         
-        # The main logic for the rest of the dashboard should *exclude* "Not Approved" records
+        # Exclude "Not Approved" records from the main dashboard metrics view
         if VALIDATION_COL in filtered_final.columns:
-            # First, filter out 'Not Approved' from the main dashboard data view
             df_for_metrics = filtered_final[filtered_final[VALIDATION_COL] != "Not Approved"].copy()
-            # Then, fill NaN statuses for the metric view only
             df_for_metrics[VALIDATION_COL].fillna("Validation Ongoing", inplace=True)
         else:
             df_for_metrics = filtered_final.copy()
-            st.warning("⚠️ Validation Status column not found. All records included in metrics.")
 
 
     submission_ids = df_for_metrics['_uuid'].unique()
     filtered_females = df_females[df_females['_submission__uuid'].isin(submission_ids)]
     filtered_preg = df_preg[df_preg['_submission__uuid'].isin(submission_ids)]
 
-    # Use the full dataframes for QC calculation, then filter by submission_ids
+    # Generate QC data for the full set, then filter by submission_ids
     df_qc = generate_qc_dataframe(df_mortality, df_females, df_preg)
     filtered_df = df_qc[df_qc['_submission__uuid'].isin(df_for_metrics['_uuid'])]
 
@@ -490,24 +468,13 @@ def run_dashboard(df_mortality, df_females, df_preg):
         cols = st.columns(4)
         cols[0].metric("Total Households Reached", f"{df_for_metrics['_uuid'].nunique():,}")
         
-        # Safely access column for metrics
         ra_col_for_metric = RA_COL if RA_COL in df_for_metrics.columns else None
         ward_col_for_metric = WARD_COL if WARD_COL in df_for_metrics.columns else None
         community_col_for_metric = COMMUNITY_COL if COMMUNITY_COL in df_for_metrics.columns else None
 
-        if ra_col_for_metric:
-            cols[1].metric("Active Enumerators", df_for_metrics[ra_col_for_metric].nunique())
-        else:
-            cols[1].metric("Active Enumerators", "N/A")
-
+        cols[1].metric("Active Enumerators", df_for_metrics[ra_col_for_metric].nunique() if ra_col_for_metric else 0)
         cols[2].metric("Wards Reached", df_for_metrics[ward_col_for_metric].nunique() if ward_col_for_metric else 0)
-        
-        # Use the specific column if it exists, otherwise count the unique values in the raw column and display the generic name
-        if community_col_for_metric:
-             # This count now reflects unique community NAMES, not codes.
-             cols[3].metric("Communities Reached", df_for_metrics[community_col_for_metric].nunique())
-        else:
-             cols[3].metric("Communities Reached", 0) 
+        cols[3].metric("Communities Reached", df_for_metrics[community_col_for_metric].nunique() if community_col_for_metric else 0)
 
 
     # ---------------- QC Summary ----------------
@@ -515,12 +482,10 @@ def run_dashboard(df_mortality, df_females, df_preg):
     with st.container():
         cols = st.columns(6)
         
-        # Count the number of unique submissions flagged with each error type
         born_alive_mismatch = (filtered_df["QC_Issues"].str.contains("Born Alive mismatch")).sum()
         later_died_mismatch = (filtered_df["QC_Issues"].str.contains("Born Alive but Later Died mismatch")).sum()
         miscarriage_mismatch = (filtered_df["QC_Issues"].str.contains("Miscarrage mismatch")).sum()
         
-        # Note: The Duplication counts here are based on the number of *submissions* flagged
         display_qc_metric(cols[0], "Duplicate Household", (filtered_df["QC_Issues"].str.contains("Duplicate Household")).sum())
         display_qc_metric(cols[1], "Duplicate Mother", (filtered_df["QC_Issues"].str.contains("Duplicate Mother")).sum())
         display_qc_metric(cols[2], "Duplicate Child", (filtered_df["QC_Issues"].str.contains("Duplicate Child")).sum())
@@ -536,26 +501,20 @@ def run_dashboard(df_mortality, df_females, df_preg):
         not_approved_df = df_mortality_original[df_mortality_original[VALIDATION_COL] == "Not Approved"].copy()
 
         if not not_approved_df.empty:
-            # Set the action column to the literal status "Not Approved"
             not_approved_df['Validation Status'] = "Not Approved"
             
-            # Use the actual column names in the list
             display_cols = ['Validation Status', UNIQUE_CODE_COL, RA_COL, LGA_COL, WARD_COL, COMMUNITY_COL, DATE_COL]
-            
-            # Filter the columns present in the DataFrame and rename
             display_cols = [col for col in display_cols if col in not_approved_df.columns]
             
             display_na_df = not_approved_df[display_cols].rename(columns={
-                UNIQUE_CODE_COL: 'Household Unique Code',
+                UNIQUE_CODE_COL: 'unique_code',
                 RA_COL: RA_DISPLAY_NAME,
                 LGA_COL: LGA_DISPLAY_NAME,
                 WARD_COL: WARD_DISPLAY_NAME,
-                # COMMUNITY_COL now holds the NAME and is renamed to the requested display name
                 COMMUNITY_COL: COMMUNITY_DISPLAY_NAME, 
                 DATE_COL: 'Submission Date'
             })
             
-            # Format date column
             if 'Submission Date' in display_na_df.columns:
                  display_na_df['Submission Date'] = pd.to_datetime(
                      display_na_df['Submission Date'], errors='coerce'
@@ -584,33 +543,26 @@ def run_dashboard(df_mortality, df_females, df_preg):
     st.subheader("🏠 Duplicate Household Submissions (Excluding 'Not Approved')")
     
     if UNIQUE_CODE_COL in df_for_metrics.columns:
-        # 1. Identify rows that are duplicates based on the Unique Code in the filtered (non-Not Approved) data
         dupe_mask = df_for_metrics.duplicated(subset=UNIQUE_CODE_COL, keep=False)
         duplicate_households = df_for_metrics[dupe_mask].sort_values(by=UNIQUE_CODE_COL).copy()
 
         if not duplicate_households.empty:
-            # Prepare the display columns
             display_dupe_cols = [
                 '_uuid', UNIQUE_CODE_COL, RA_COL, LGA_COL, WARD_COL, 
                 COMMUNITY_COL, DATE_COL
             ]
-            
-            # Filter the columns present in the DataFrame
             display_dupe_cols = [col for col in display_dupe_cols if col in duplicate_households.columns]
             
-            # Rename columns for clarity
             display_dupe_df = duplicate_households[display_dupe_cols].rename(columns={
                 '_uuid': 'Submission UUID',
-                UNIQUE_CODE_COL: 'Household Unique Code (DUPLICATE)',
+                UNIQUE_CODE_COL: 'unique_code',
                 RA_COL: RA_DISPLAY_NAME,
                 LGA_COL: LGA_DISPLAY_NAME,
                 WARD_COL: WARD_DISPLAY_NAME,
-                # COMMUNITY_COL now holds the NAME and is renamed to the requested display name
                 COMMUNITY_COL: COMMUNITY_DISPLAY_NAME,
                 DATE_COL: 'Submission Date',
             })
             
-            # Format date column
             if 'Submission Date' in display_dupe_df.columns:
                  display_dupe_df['Submission Date'] = pd.to_datetime(
                      display_dupe_df['Submission Date'], errors='coerce'
@@ -627,17 +579,12 @@ def run_dashboard(df_mortality, df_females, df_preg):
     # ---------------- Detailed Error Records ----------------
     st.markdown("---")
     st.subheader("📋 Detailed Internal/Cross-Check Error Records (Excluding 'Not Approved')")
-    display_df = filtered_df.copy()
+    display_df = filtered_df[filtered_df['Total_Flags'] > 0].copy()
     
-    # --- Filter to only show records with errors ---
-    display_df = display_df[display_df['Total_Flags'] > 0]
-    # -----------------------------------------------
-
     dupe_cols = ['_uuid', UNIQUE_CODE_COL, CONSENT_DATE_COL_RAW, VALIDATION_COL, LGA_COL, WARD_COL, COMMUNITY_COL, RA_COL]
     present_dupe_cols = [col for col in dupe_cols if col in df_for_metrics.columns]
     dupe_df = df_for_metrics[present_dupe_cols].rename(columns={'_uuid': '_submission__uuid'}).copy()
     
-    # Rename RA column in dupe_df to prevent merge confusion if RA_COL was found successfully
     if RA_COL in dupe_df.columns:
         dupe_df.rename(columns={RA_COL: 'Research_Assistant_Merge'}, inplace=True)
 
@@ -645,48 +592,38 @@ def run_dashboard(df_mortality, df_females, df_preg):
         dupe_df[CONSENT_DATE_COL_RAW] = dupe_df[CONSENT_DATE_COL_RAW].dt.strftime('%Y-%m-%d')
         
     display_df = display_df.merge(dupe_df, on="_submission__uuid", how="left")
-    
-    # Drop the merged Research_Assistant column as we already have 'Research_Assistant' from the QC calculation
     display_df.drop(columns=["Research_Assistant_Merge"], inplace=True, errors='ignore')
 
-
     display_df.rename(columns={
-        LGA_COL: LGA_DISPLAY_NAME,
-        WARD_COL: WARD_DISPLAY_NAME,
-        # COMMUNITY_COL now holds the NAME and is renamed to the requested display name
-        COMMUNITY_COL: COMMUNITY_DISPLAY_NAME,
-        'Total_Flags': 'Total Flags',
-        'Error_Percentage': 'Error %',
-        '_submission__uuid': 'Submission UUID',
-        UNIQUE_CODE_COL: 'Household Unique Code', 
-        CONSENT_DATE_COL_RAW: 'Date of Consent',
-        VALIDATION_COL: 'Validation Status',
-        # Rename the Research_Assistant column that comes from the QC calculation to the desired display name
-        'Research_Assistant': RA_DISPLAY_NAME 
+        LGA_COL: LGA_DISPLAY_NAME, WARD_COL: WARD_DISPLAY_NAME, COMMUNITY_COL: COMMUNITY_DISPLAY_NAME,
+        'Total_Flags': 'Total Flags', 'Error_Percentage': 'Error %', '_submission__uuid': 'Submission UUID',
+        UNIQUE_CODE_COL: 'unique_code', CONSENT_DATE_COL_RAW: 'Date of Consent',
+        VALIDATION_COL: 'Validation Status', 'Research_Assistant': RA_DISPLAY_NAME 
     }, inplace=True)
     
-    # Select and order columns for display - Confirmed Community Display Name is included
     display_cols = [
-        'Submission UUID', 'Household Unique Code', RA_DISPLAY_NAME, 'Total Flags', 
-        'Error %', 'QC_Issues', LGA_DISPLAY_NAME, WARD_DISPLAY_NAME, COMMUNITY_DISPLAY_NAME, 'Date of Consent', 
-        'Validation Status'
+        'Submission UUID', 'unique_code', RA_DISPLAY_NAME, 'Total Flags', 
+        'Error %', 'QC_Issues', LGA_DISPLAY_NAME, WARD_DISPLAY_NAME, COMMUNITY_DISPLAY_NAME, 
+        'Date of Consent', 'Validation Status'
     ]
-    
-    # Ensure only existing columns are passed to the dataframe display
     display_cols = [col for col in display_cols if col in display_df.columns]
     
-    st.dataframe(display_df[display_cols], use_container_width=True, height=500)
-    st.success("✅ Dashboard updated. Community codes are now mapped to their names for display and filtering.")
+    if not display_df.empty:
+        st.dataframe(display_df[display_cols], use_container_width=True, height=500)
+    else:
+        st.info("🎉 No internal or cross-check errors found in the current filtered data.")
+
 
 # ---------------- FORCE REFRESH BUTTON ----------------
 with st.sidebar:
     st.markdown("---")
     if st.button("🔄 Force Refresh Data"):
         st.session_state.refresh = True
-        st.session_state.force_refresh_trigger = not st.session_state.force_refresh_trigger
+        # Rerunning the script will trigger the load_data with force_refresh=True
+        st.rerun()
 
 # ---------------- INITIAL LOAD ----------------
-force_refresh_flag = st.session_state.get('refresh', False) or st.session_state.get('force_refresh_trigger', False)
+force_refresh_flag = st.session_state.get('refresh', False)
 df_mortality, df_females, df_preg = load_data(force_refresh=force_refresh_flag)
-st.session_state.refresh = False
+st.session_state.refresh = False # Reset the flag after loading
 run_dashboard(df_mortality, df_females, df_preg)
