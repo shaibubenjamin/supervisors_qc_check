@@ -212,7 +212,7 @@ def show_login_page():
     st.markdown("<h1 style='color: #1E88E5;'>Welcome to Supervisors Dashboard</h1>", unsafe_allow_html=True)
     
     st.markdown('<div class="login-box">', unsafe_allow_html=True)
-    st.markdown("<h2 style='margin-top: 10px; color: #333;'>Login:</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='margin-top: 10px; color: #333;'>Cluster2 Login:</h2>", unsafe_allow_html=True)
     st.markdown("Enter your **Ward Name** or **Admin** (case-sensitive).")
 
     # Use a form to handle submission cleanly
