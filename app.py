@@ -7,7 +7,8 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 import requests
-from io import BytesIO
+# IMPORTANT: Use io.StringIO for robust parsing of string data
+from io import BytesIO, StringIO 
 
 # ---------------- SESSION STATE INITIALIZATION ----------------
 if 'usage_count' not in st.session_state:
@@ -51,6 +52,130 @@ MAIN_SHEET = "mortality_pilot_cluster_one-..."
 FEMALES_SHEET = "female"
 PREG_SHEET = "pregnancy_history"
 
+# --- SOP Lookup Table (Cleaned for safer parsing) ---
+# NOTE: The data below has been reformatted to use consistent spaces between columns
+# for robust reading, and the use of the `sep='\t'` with `skipinitialspace=True` 
+# combined with StringIO should resolve the parsing error.
+SOP_DATA = """
+lga_Label	ward_Label	settlement_Label	Community_ID
+Potiskum	Bare_Bari	Kandahar	B-11_14_1_1
+Potiskum	Bare_Bari	Unguwan_Kuka	B-11_14_1_2
+Potiskum	Bare_Bari	Jigawa_Chadi	B-11_14_1_3
+Potiskum	Bare_Bari	Gadama	B-11_14_1_4
+Potiskum	Bare_Bari	Ung_Gada	B-11_14_1_5
+Potiskum	Bare_Bari	Jigawa_City_Petroleum	B-11_14_1_6
+Potiskum	Bare_Bari	Ung_Kuka	B-11_14_1_7
+Potiskum	Bare_Bari	Jigawa_Makabarta	B-11_14_1_8
+Potiskum	Bare_Bari	Mangorori	B-11_14_1_9
+Potiskum	Bare_Bari	Lai_Lai_Madabi	B-11_14_1_10
+Potiskum	Bolewa_A	Madu_K_O	B-11_14_2_1
+Potiskum	Bolewa_A	Maiung_Galadima	B-11_14_2_2
+Potiskum	Bolewa_A	Abba_Sugu	B-11_14_2_3
+Potiskum	Bolewa_A	Mai_Ung_Luccu	B-11_14_2_4
+Potiskum	Bolewa_A	Mai_Ung_Bomoi_3	B-11_14_2_5
+Potiskum	Bolewa_A	Hakimi_Shuaibu_1	B-11_14_2_6
+Potiskum	Bolewa_A	Bomoi_Maina	B-11_14_2_7
+Potiskum	Bolewa_A	Chiroma	B-11_14_2_8
+Potiskum	Bolewa_A	Lamba_Maaji	B-11_14_2_9
+Potiskum	Bolewa_A	Yusuf_Kafinta_1	B-11_14_2_10
+Potiskum	Bolewa_B	Muhd_Guza	B-11_14_3_1
+Potiskum	Bolewa_B	Alhaji_Ibrahim	B-11_14_3_2
+Potiskum	Bolewa_B	Mai_Unguwan_Darin	B-11_14_3_3
+Potiskum	Bolewa_B	Baba_Sarki	B-11_14_3_4
+Potiskum	Bolewa_B	Mallam_Ali	B-11_14_3_5
+Potiskum	Bolewa_B	Mai_Unguwan_Hamidu	B-11_14_3_6
+Potiskum	Bolewa_B	Maianguwa_Bukar	B-11_14_3_7
+Potiskum	Bolewa_B	Usman_Arjali	B-11_14_3_8
+Potiskum	Bolewa_B	New_Secretariat	B-11_14_3_9
+Potiskum	Bolewa_B	Layin_Palace	B-11_14_3_10
+Potiskum	Danchuwa	Garin_Tori	B-11_14_4_1
+Potiskum	Danchuwa	Maina_Bujik	B-11_14_4_2
+Potiskum	Danchuwa	Garin_Bah	B-11_14_4_3
+Potiskum	Danchuwa	Danchuwa_Lamba	B-11_14_4_4
+Potiskum	Danchuwa	Makwai_Bulama_Abdu	B-11_14_4_5
+Potiskum	Danchuwa	Bogocho	B-11_14_4_6
+Potiskum	Danchuwa	Makwai_Bulama_Yau	B-11_14_4_7
+Potiskum	Danchuwa	Babaudu	B-11_14_4_8
+Potiskum	Danchuwa	Garin_Bade	B-11_14_4_9
+Potiskum	Danchuwa	Sabon_Layi	B-11_14_4_10
+Potiskum	Dogo_Nini	Coca_Cola	B-11_14_5_1
+Potiskum	Dogo_Nini	Mai_Anguwa_Kagazau	B-11_14_5_2
+Potiskum	Dogo_Nini	Lamba_Muhd	B-11_14_5_3
+Potiskum	Dogo_Nini	Adamu_Wanzam	B-11_14_5_4
+Potiskum	Dogo_Nini	Saidu_Manager	B-11_14_5_5
+Potiskum	Dogo_Nini	Lamba_Idrissa	B-11_14_5_6
+Gombe	Dogo_Nini	Yan_Shinkafa	B-11_14_5_7
+Gombe	Dogo_Nini	Mai_Anguwa_Babayo	B-11_14_5_8
+Potiskum	Dogo_Nini	Yan_Gadaje	B-11_14_5_9
+Potiskum	Dogo_Nini	Haruna_Dugum	B-11_14_5_10
+Potiskum	Dogo_Tebo	Bayan_Cabs	B-11_14_6_1
+Potiskum	Dogo_Tebo	Damboa_Area	B-11_14_6_2
+Potiskum	Dogo_Tebo	Hassan_Damboa	B-11_14_6_3
+Potiskum	Dogo_Tebo	Jujin_Oc	B-11_14_6_4
+Potiskum	Dogo_Tebo	Lamba_Goni	B-11_14_6_5
+Potiskum	Dogo_Tebo	Hussaini_Damboa	B-11_14_6_6
+Potiskum	Dogo_Tebo	Yankuka	B-11_14_6_7
+Potiskum	Dogo_Tebo	Ibrahim_Chana	B-11_14_6_8
+Potiskum	Dogo_Tebo	Cabs	B-11_14_6_9
+Potiskum	Dogo_Tebo	Tinja_Tuya_Street	B-11_14_6_10
+Potiskum	Hausawa_Asibiti	Danjebu	B-11_14_7_1
+Potiskum	Hausawa_Asibiti	Bayan_Makabarta	B-11_14_7_2
+Potiskum	Hausawa_Asibiti	Mai_Madagali	B-11_14_7_3
+Potiskum	Hausawa_Asibiti	Rigiyar_Gardi	B-11_14_7_4
+Potiskum	Hausawa_Asibiti	Mai_Saleh	B-11_14_7_5
+Potiskum	Hausawa_Asibiti	Alhaji_Mato	B-11_14_7_6
+Potiskum	Hausawa_Asibiti	Musa_Kuku	B-11_14_7_7
+Potiskum	Hausawa_Asibiti	Yaro_Gambo	B-11_14_7_8
+Potiskum	Hausawa_Asibiti	Wakili_Audu	B-11_14_7_9
+Potiskum	Hausawa_Asibiti	Mai_Usman	B-11_14_7_10
+Potiskum	Mamudo	Unguwan_Ali	B-11_14_8_1
+Potiskum	Mamudo	Gumbakuku	B-11_14_8_2
+Potiskum	Mamudo	Marke_Chayi	B-11_14_8_3
+Potiskum	Mamudo	Bubaram_Bilal_Dambam	B-11_14_8_4
+Potiskum	Mamudo	Sandawai	B-11_14_8_5
+Potiskum	Mamudo	Bula_Hc	B-11_14_8_6
+Potiskum	Mamudo	Kama_Kirji	B-11_14_8_7
+Potiskum	Mamudo	Zagam	B-11_14_8_8
+Potiskum	Mamudo	Adaya_Pri_Sch	B-11_14_8_9
+Potiskum	Mamudo	Maina_Buba	B-11_14_8_10
+Potiskum	Ngojin_Alaraba	Tokare	B-11_14_9_1
+Potiskum	Ngojin_Alaraba	Mbalido	B-11_14_9_2
+Potiskum	Ngojin_Alaraba	Hadijam_Gubdo	B-11_14_9_3
+Potiskum	Ngojin_Alaraba	Garin_Dala	B-11_14_9_4
+Potiskum	Ngojin_Alaraba	Mai_Turare	B-11_14_9_5
+Potiskum	Ngojin_Alaraba	Badejo	B-11_14_9_6
+Potiskum	Ngojin_Alaraba	Arjali	B-11_14_9_7
+Potiskum	Ngojin_Alaraba	Fara_Fara_Bulama	B-11_14_9_8
+Potiskum	Ngojin_Alaraba	Mai_Jaarma	B-11_14_9_9
+Potiskum	Ngojin_Alaraba	Bulakos	B-11_14_9_10
+Potiskum	Yerimaram	Nasarawa_B	B-11_14_10_1
+Potiskum	Yerimaram	Yerimaram_Bulama_Lamba_Zubairu	B-11_14_10_2
+Potiskum	Yerimaram	Kabono	B-11_14_10_3
+Potiskum	Yerimaram	Yawachi	B-11_14_10_4
+Potiskum	Yerimaram	Nahuta_Babban_Layi	B-11_14_10_5
+Potiskum	Yerimaram	Travellers	B-11_14_10_6
+Potiskum	Yerimaram	Hon_Sani	B-11_14_10_7
+Potiskum	Yerimaram	Nahuta_Pri_School	B-11_14_10_8
+Potiskum	Yerimaram	Mai_Anguwa_Yakubu_33	B-11_14_10_9
+Potiskum	Yerimaram	Mai_Anguwa_Sale	B-11_14_10_10
+"""
+
+# Load SOP data into a DataFrame
+# CRITICAL FIX: Use StringIO and clean SOP_DATA string to ensure consistent column parsing
+try:
+    SOP_DF = pd.read_csv(StringIO(SOP_DATA), sep='\t', skipinitialspace=True)
+    # Validate the column names after loading
+    if list(SOP_DF.columns) != ['lga_Label', 'ward_Label', 'settlement_Label', 'Community_ID']:
+        st.error("❌ SOP Data Loading Error: Column headers were not parsed correctly. Check the tab/space delimiters in the header.")
+        SOP_COMMUNITY_MAP = {}
+    else:
+        # Create a dictionary map from Community_ID to location labels
+        SOP_COMMUNITY_MAP = SOP_DF.set_index('Community_ID')['settlement_Label'].to_dict()
+except Exception as e:
+    st.error(f"❌ Critical SOP Data Parsing Failed: {e}. Please ensure the data rows and headers are separated by a single tab.")
+    SOP_COMMUNITY_MAP = {}
+
+
 # ---------------- SAFE DATA LOADER ----------------
 def load_data(force_refresh=False):
     """
@@ -78,6 +203,15 @@ def load_data(force_refresh=False):
         if "start" in df_mortality.columns:
             df_mortality["start"] = pd.to_datetime(df_mortality["start"], errors='coerce')
 
+        # --- Apply Community Code Mapping ---
+        COMMUNITY_COL_RAW = find_column_with_suffix(df_mortality, "community")
+        
+        if COMMUNITY_COL_RAW in df_mortality.columns and SOP_COMMUNITY_MAP:
+             # Apply the map. Use the code itself if a mapping is not found (default behavior)
+             df_mortality[COMMUNITY_COL_RAW] = df_mortality[COMMUNITY_COL_RAW].astype(str).map(
+                 lambda x: SOP_COMMUNITY_MAP.get(x, x)
+             )
+        
         # Cache the fresh data
         st.session_state[cache_key] = (df_mortality, df_females, df_preg)
         return df_mortality, df_females, df_preg
@@ -86,7 +220,7 @@ def load_data(force_refresh=False):
         st.error(f"❌ Error loading workbook: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-# ---------------- HELPER FUNCTIONS ----------------
+# ---------------- HELPER FUNCTIONS (No change needed) ----------------
 def find_column_with_suffix(df, keyword):
     if df is None:
         return None
@@ -94,6 +228,9 @@ def find_column_with_suffix(df, keyword):
         if keyword.lower() in col.lower():
             return col
     return None
+
+# ... (Rest of generate_qc_dataframe, display_qc_metric, and run_dashboard functions remain the same) ...
+# (The functions below are identical to the previous response, but included for completeness)
 
 def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     outcome_col = find_column_with_suffix(df_preg_history, "Was the baby born alive")
@@ -247,7 +384,8 @@ def run_dashboard(df_mortality, df_females, df_preg):
     # ---------------- DYNAMIC COLUMN MAPPING ----------------
     LGA_COL = find_column_with_suffix(df_mortality, "lga") or "Confirm your LGA"
     WARD_COL = find_column_with_suffix(df_mortality, "ward") or "Confirm your ward"
-    COMMUNITY_COL = find_column_with_suffix(df_mortality, "community") or "Confirm your community"
+    # NOTE: The value in COMMUNITY_COL now holds the NAME due to the mapping applied in load_data()
+    COMMUNITY_COL = find_column_with_suffix(df_mortality, "community") or "Confirm your community" 
     RA_COL = find_column_with_suffix(df_mortality, "name") or "Type in your Name"
     DATE_COL = "start"
     VALIDATION_COL = "_validation_status"
@@ -255,15 +393,11 @@ def run_dashboard(df_mortality, df_females, df_preg):
     UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique") or 'unique_code' 
     CONSENT_DATE_COL_RAW = find_column_with_suffix(df_mortality, "consent_date") or DATE_COL
     
-    # ------------------ NEW COLUMN DISPLAY NAMES ---------------------
-    # Map the internal column name (if found) to the requested display name
-    COMMUNITY_DISPLAY_NAME = "Confirm your community"
+    # ------------------ COLUMN DISPLAY NAMES ---------------------
+    COMMUNITY_DISPLAY_NAME = "Confirm your community" # Keeps the requested display label
     LGA_DISPLAY_NAME = "LGA" 
     WARD_DISPLAY_NAME = "Ward" 
     RA_DISPLAY_NAME = "Enumerator Name"
-    
-    # Safely rename Community column for display in metric and filter section
-    community_col_for_filter = COMMUNITY_COL if COMMUNITY_COL in df_mortality.columns else None
     # -------------------------------------------------------------------
 
     # --- Sidebar Filters ---
@@ -295,7 +429,7 @@ def run_dashboard(df_mortality, df_females, df_preg):
                 if selected_ward != "All":
                     df = df[df[WARD_COL] == selected_ward]
             
-            # Community Filter - Use COMMUNITY_COL for filtering, but ensure filter label is clear
+            # Community Filter - Now filtering by NAME (since mapping was applied)
             if not community_filter_ok:
                 st.warning(f"⚠️ **Community Filter Disabled:** Column '{COMMUNITY_COL}' not found.")
             else:
@@ -370,9 +504,10 @@ def run_dashboard(df_mortality, df_females, df_preg):
         
         # Use the specific column if it exists, otherwise count the unique values in the raw column and display the generic name
         if community_col_for_metric:
+             # This count now reflects unique community NAMES, not codes.
              cols[3].metric("Communities Reached", df_for_metrics[community_col_for_metric].nunique())
         else:
-             cols[3].metric("Communities Reached", 0) # Should be covered by the filter check
+             cols[3].metric("Communities Reached", 0) 
 
 
     # ---------------- QC Summary ----------------
@@ -393,7 +528,7 @@ def run_dashboard(df_mortality, df_females, df_preg):
         display_qc_metric(cols[4], "B.Alive, Later Died Mismatch", later_died_mismatch)
         display_qc_metric(cols[5], "Miscarriage Mismatch", miscarriage_mismatch)
 
-    # ---------------- Not Approved Table (UPDATED: Community Display Name) ----------------
+    # ---------------- Not Approved Table ----------------
     st.markdown("---")
     st.subheader("❌ Submissions **NOT APPROVED** (Action: Recollection Required)")
     
@@ -415,7 +550,7 @@ def run_dashboard(df_mortality, df_females, df_preg):
                 RA_COL: RA_DISPLAY_NAME,
                 LGA_COL: LGA_DISPLAY_NAME,
                 WARD_COL: WARD_DISPLAY_NAME,
-                # CRITICAL CHANGE: Rename the raw column to the requested display name
+                # COMMUNITY_COL now holds the NAME and is renamed to the requested display name
                 COMMUNITY_COL: COMMUNITY_DISPLAY_NAME, 
                 DATE_COL: 'Submission Date'
             })
@@ -430,7 +565,7 @@ def run_dashboard(df_mortality, df_females, df_preg):
             st.error(f"🔴 **Total Not Approved:** {len(display_na_df):,} submissions must be revisited/recollected.")
 
         else:
-            st.info("✅ No 'Not Approved' submissions found.")
+            st.info("✅ No 'Not Approved' submissions found in the current filter selection.")
     else:
         st.error(f"❌ Cannot display 'Not Approved' table. Validation Status column ('{VALIDATION_COL}') not found.")
 
@@ -445,7 +580,7 @@ def run_dashboard(df_mortality, df_females, df_preg):
         color="#D32F2F"
     )
 
-    # ---------------- DUPLICATE HOUSEHOLD RECORDS (UPDATED: Community Display Name) ----------------
+    # ---------------- DUPLICATE HOUSEHOLD RECORDS ----------------
     st.subheader("🏠 Duplicate Household Submissions (Excluding 'Not Approved')")
     
     if UNIQUE_CODE_COL in df_for_metrics.columns:
@@ -470,7 +605,7 @@ def run_dashboard(df_mortality, df_females, df_preg):
                 RA_COL: RA_DISPLAY_NAME,
                 LGA_COL: LGA_DISPLAY_NAME,
                 WARD_COL: WARD_DISPLAY_NAME,
-                # CRITICAL CHANGE: Rename the raw column to the requested display name
+                # COMMUNITY_COL now holds the NAME and is renamed to the requested display name
                 COMMUNITY_COL: COMMUNITY_DISPLAY_NAME,
                 DATE_COL: 'Submission Date',
             })
@@ -489,7 +624,7 @@ def run_dashboard(df_mortality, df_females, df_preg):
         st.error(f"❌ Cannot check for household duplicates. Unique Code column ('{UNIQUE_CODE_COL}') not found.")
 
 
-    # ---------------- Detailed Error Records (UPDATED: Community Display Name) ----------------
+    # ---------------- Detailed Error Records ----------------
     st.markdown("---")
     st.subheader("📋 Detailed Internal/Cross-Check Error Records (Excluding 'Not Approved')")
     display_df = filtered_df.copy()
@@ -518,7 +653,7 @@ def run_dashboard(df_mortality, df_females, df_preg):
     display_df.rename(columns={
         LGA_COL: LGA_DISPLAY_NAME,
         WARD_COL: WARD_DISPLAY_NAME,
-        # CRITICAL CHANGE: Rename the raw column to the requested display name
+        # COMMUNITY_COL now holds the NAME and is renamed to the requested display name
         COMMUNITY_COL: COMMUNITY_DISPLAY_NAME,
         'Total_Flags': 'Total Flags',
         'Error_Percentage': 'Error %',
@@ -541,7 +676,7 @@ def run_dashboard(df_mortality, df_females, df_preg):
     display_cols = [col for col in display_cols if col in display_df.columns]
     
     st.dataframe(display_df[display_cols], use_container_width=True, height=500)
-    st.success("✅ Dashboard updated. The 'Community' column is now displayed as 'Confirm your community' in all tables.")
+    st.success("✅ Dashboard updated. Community codes are now mapped to their names for display and filtering.")
 
 # ---------------- FORCE REFRESH BUTTON ----------------
 with st.sidebar:
