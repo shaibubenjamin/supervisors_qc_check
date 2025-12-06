@@ -236,7 +236,10 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     c_dead_col = find_column_with_suffix(df_females, "c_dead")
     miscarriage_col = find_column_with_suffix(df_females, "misscarraige")
     
-    UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique_code") or 'unique_code_code'
+    # *** UPDATED: Explicitly look for a column containing "unique_code" ***
+    # This assumes the full unique code, like 'B-11_14_2_2_025', lives in a column 
+    # named "unique_code" or something similar.
+    UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique_code") or 'unique_code_col_not_found' 
     
     # Handle missing columns in sub-tables by creating dummy columns
     female_cols = {
@@ -250,8 +253,12 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
             female_cols[name] = dummy_col
     c_alive_col, c_dead_col, miscarriage_col, boys_dead_col, girls_dead_col = female_cols.values()
 
-    # --- Household Duplicate Check (Confirmed to use unique_code_CODE_COL) ---
-    mortality_dupes = df_mortality[df_mortality.duplicated(subset=UNIQUE_CODE_COL, keep=False)]
+    # --- Household Duplicate Check ---
+    if UNIQUE_CODE_COL in df_mortality.columns:
+        mortality_dupes = df_mortality[df_mortality.duplicated(subset=UNIQUE_CODE_COL, keep=False)]
+    else:
+        # Fallback if unique code column is truly missing, resulting in no duplicates flagged
+        mortality_dupes = pd.DataFrame()
     
     # Identify mother and child duplicates based on IDs (assuming mother_id and child_id are consistent)
     females_dupes = df_females[df_females.duplicated(subset="mother_id", keep=False)]
@@ -377,7 +384,8 @@ def run_dashboard(df_mortality, df_females, df_preg):
     RA_COL = find_column_with_suffix(df_mortality, "name") or "Type in your Name"
     DATE_COL = "start"
     VALIDATION_COL = "_validation_status"
-    UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique") or 'unique_code' 
+    # *** UPDATED: Use the specific column name/search term for the unique code ***
+    UNIQUE_CODE_COL_RAW = find_column_with_suffix(df_mortality, "unique_code") or find_column_with_suffix(df_mortality, "unique") or 'unique_code' 
     CONSENT_DATE_COL_RAW = find_column_with_suffix(df_mortality, "consent_date") or DATE_COL
     
     # ------------------ COLUMN DISPLAY NAMES ---------------------
@@ -385,12 +393,14 @@ def run_dashboard(df_mortality, df_females, df_preg):
     LGA_DISPLAY_NAME = "LGA" 
     WARD_DISPLAY_NAME = "Ward" 
     RA_DISPLAY_NAME = "Enumerator Name"
+    UNIQUE_CODE_DISPLAY_NAME = "unique_code" # *** UPDATED: Set desired display name ***
     # -------------------------------------------------------------------
 
     # --- Sidebar Filters ---
     with st.sidebar:
         st.header("Data Filters")
-        st.caption(f"LGA: `{LGA_COL}` | RA: `{RA_COL}` | Unique ID: `{UNIQUE_CODE_COL}`")
+        # Use the raw column name for caption/dynamic lookup
+        st.caption(f"LGA: `{LGA_COL}` | RA: `{RA_COL}` | Unique ID Col: `{UNIQUE_CODE_COL_RAW}`")
         st.markdown("---")
 
         # Safely determine if columns exist for filtering
@@ -503,11 +513,11 @@ def run_dashboard(df_mortality, df_females, df_preg):
         if not not_approved_df.empty:
             not_approved_df['Validation Status'] = "Not Approved"
             
-            display_cols = ['Validation Status', UNIQUE_CODE_COL, RA_COL, LGA_COL, WARD_COL, COMMUNITY_COL, DATE_COL]
+            display_cols = ['Validation Status', UNIQUE_CODE_COL_RAW, RA_COL, LGA_COL, WARD_COL, COMMUNITY_COL, DATE_COL]
             display_cols = [col for col in display_cols if col in not_approved_df.columns]
             
             display_na_df = not_approved_df[display_cols].rename(columns={
-                UNIQUE_CODE_COL: 'Household Unique Code',
+                UNIQUE_CODE_COL_RAW: UNIQUE_CODE_DISPLAY_NAME, # *** UPDATED DISPLAY NAME ***
                 RA_COL: RA_DISPLAY_NAME,
                 LGA_COL: LGA_DISPLAY_NAME,
                 WARD_COL: WARD_DISPLAY_NAME,
@@ -542,20 +552,20 @@ def run_dashboard(df_mortality, df_females, df_preg):
     # ---------------- DUPLICATE HOUSEHOLD RECORDS ----------------
     st.subheader("🏠 Duplicate Household Submissions (Excluding 'Not Approved')")
     
-    if UNIQUE_CODE_COL in df_for_metrics.columns:
-        dupe_mask = df_for_metrics.duplicated(subset=UNIQUE_CODE_COL, keep=False)
-        duplicate_households = df_for_metrics[dupe_mask].sort_values(by=UNIQUE_CODE_COL).copy()
+    if UNIQUE_CODE_COL_RAW in df_for_metrics.columns:
+        dupe_mask = df_for_metrics.duplicated(subset=UNIQUE_CODE_COL_RAW, keep=False)
+        duplicate_households = df_for_metrics[dupe_mask].sort_values(by=UNIQUE_CODE_COL_RAW).copy()
 
         if not duplicate_households.empty:
             display_dupe_cols = [
-                '_uuid', UNIQUE_CODE_COL, RA_COL, LGA_COL, WARD_COL, 
+                '_uuid', UNIQUE_CODE_COL_RAW, RA_COL, LGA_COL, WARD_COL, 
                 COMMUNITY_COL, DATE_COL
             ]
             display_dupe_cols = [col for col in display_dupe_cols if col in duplicate_households.columns]
             
             display_dupe_df = duplicate_households[display_dupe_cols].rename(columns={
                 '_uuid': 'Submission UUID',
-                UNIQUE_CODE_COL: 'Household Unique Code (DUPLICATE)',
+                UNIQUE_CODE_COL_RAW: UNIQUE_CODE_DISPLAY_NAME, # *** UPDATED DISPLAY NAME ***
                 RA_COL: RA_DISPLAY_NAME,
                 LGA_COL: LGA_DISPLAY_NAME,
                 WARD_COL: WARD_DISPLAY_NAME,
@@ -568,12 +578,13 @@ def run_dashboard(df_mortality, df_females, df_preg):
                      display_dupe_df['Submission Date'], errors='coerce'
                  ).dt.strftime('%Y-%m-%d %H:%M')
 
+            # Update the warning message to reflect the new display name
             st.dataframe(display_dupe_df, use_container_width=True, height=300)
-            st.warning(f"❗ **{len(display_dupe_df):,}** submissions share the same **Unique Code**. They should be reviewed.")
+            st.warning(f"❗ **{len(display_dupe_df):,}** submissions share the same **{UNIQUE_CODE_DISPLAY_NAME}**. They should be reviewed.")
         else:
             st.info("✅ No duplicate household submissions found in the current filter selection.")
     else:
-        st.error(f"❌ Cannot check for household duplicates. Unique Code column ('{UNIQUE_CODE_COL}') not found.")
+        st.error(f"❌ Cannot check for household duplicates. Unique Code column ('{UNIQUE_CODE_COL_RAW}') not found.")
 
 
     # ---------------- Detailed Error Records ----------------
@@ -581,7 +592,7 @@ def run_dashboard(df_mortality, df_females, df_preg):
     st.subheader("📋 Detailed Internal/Cross-Check Error Records (Excluding 'Not Approved')")
     display_df = filtered_df[filtered_df['Total_Flags'] > 0].copy()
     
-    dupe_cols = ['_uuid', UNIQUE_CODE_COL, CONSENT_DATE_COL_RAW, VALIDATION_COL, LGA_COL, WARD_COL, COMMUNITY_COL, RA_COL]
+    dupe_cols = ['_uuid', UNIQUE_CODE_COL_RAW, CONSENT_DATE_COL_RAW, VALIDATION_COL, LGA_COL, WARD_COL, COMMUNITY_COL, RA_COL]
     present_dupe_cols = [col for col in dupe_cols if col in df_for_metrics.columns]
     dupe_df = df_for_metrics[present_dupe_cols].rename(columns={'_uuid': '_submission__uuid'}).copy()
     
@@ -597,12 +608,13 @@ def run_dashboard(df_mortality, df_females, df_preg):
     display_df.rename(columns={
         LGA_COL: LGA_DISPLAY_NAME, WARD_COL: WARD_DISPLAY_NAME, COMMUNITY_COL: COMMUNITY_DISPLAY_NAME,
         'Total_Flags': 'Total Flags', 'Error_Percentage': 'Error %', '_submission__uuid': 'Submission UUID',
-        UNIQUE_CODE_COL: 'Household Unique Code', CONSENT_DATE_COL_RAW: 'Date of Consent',
+        UNIQUE_CODE_COL_RAW: UNIQUE_CODE_DISPLAY_NAME, # *** UPDATED DISPLAY NAME ***
+        CONSENT_DATE_COL_RAW: 'Date of Consent',
         VALIDATION_COL: 'Validation Status', 'Research_Assistant': RA_DISPLAY_NAME 
     }, inplace=True)
     
     display_cols = [
-        'Submission UUID', 'Household Unique Code', RA_DISPLAY_NAME, 'Total Flags', 
+        'Submission UUID', UNIQUE_CODE_DISPLAY_NAME, RA_DISPLAY_NAME, 'Total Flags', 
         'Error %', 'QC_Issues', LGA_DISPLAY_NAME, WARD_DISPLAY_NAME, COMMUNITY_DISPLAY_NAME, 
         'Date of Consent', 'Validation Status'
     ]
