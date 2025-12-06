@@ -1,5 +1,7 @@
 # ================================
 # SARMAAN II UPDATED QC DASHBOARD (OPTIMIZED + FORCE REFRESH + LIVE DATA)
+# IMPLEMENTS: Dedicated Login Page Structure + Super Admin Access + Logout
+# CHANGE: Moved Login to Top of Page, Added "Welcome" Header, Specific Login Messages
 # ================================
 
 from datetime import date
@@ -7,7 +9,6 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 import requests
-# IMPORTANT: Use io.BytesIO for web download and io.StringIO for string data parsing
 from io import BytesIO, StringIO 
 
 # ---------------- SESSION STATE INITIALIZATION ----------------
@@ -17,6 +18,12 @@ if 'refresh' not in st.session_state:
     st.session_state.refresh = False
 if 'force_refresh_trigger' not in st.session_state:
     st.session_state.force_refresh_trigger = False
+if 'authenticated_ward' not in st.session_state:
+    st.session_state.authenticated_ward = None 
+if 'page_view' not in st.session_state:
+    st.session_state.page_view = 'login' 
+if 'is_admin' not in st.session_state:
+    st.session_state.is_admin = False # New state for Admin check
 
 # ---------------- CONFIG ----------------
 st.set_page_config(
@@ -29,23 +36,41 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+    /* General styles for the main dashboard */
     .big-title { font-size: 2.5em; font-weight: 700; color: #000000; margin-bottom: 0.5em; }
     [data-testid="stMetricLabel"] { font-size: 0.9rem; font-weight: 600; color: #708090; }
     h2 { border-bottom: 2px solid #f0f2f6; padding-bottom: 10px; margin-top: 1.5em; color: #333333; }
-    .stSidebar { background-color: #f7f9fc; }
     .stDataFrame, .stTable { width: 100% !important; }
-    .st-emotion-cache-p5m854 { padding-top: 0rem; }
     .custom-metric-value { font-size: 2rem; font-weight: 600; margin-top: 0px; }
     .custom-metric-label { font-size: 0.9rem; font-weight: 600; color: #708090; margin-bottom: 0px; }
     .usage-bar-container { padding: 5px 15px; background-color: rgb(232, 245, 233); border-radius: 0.5rem; margin-bottom: 15px; border: 1px solid rgb(76, 175, 80); display: flex; align-items: center; justify-content: space-between; }
     .usage-text { color: rgb(76, 175, 80); font-weight: 600; font-size: 0.9rem; }
-    .stSidebar .stSelectbox label { color: #333333; }
+
+    /* Login Page Specific Styles - Simplified to put container at top */
+    .login-container-top {
+        padding: 30px 0;
+        text-align: center;
+        width: 100%;
+    }
+    .login-box {
+        background-color: #ffffff;
+        padding: 30px 40px;
+        border-radius: 10px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        width: 100%;
+        max-width: 400px;
+        margin: 0 auto; /* Center the box */
+    }
+    .stSidebar { display: none; } 
+    .dashboard-sidebar { display: block !important; } 
+
     </style>
     """,
     unsafe_allow_html=True
 )
 # --- END: Custom CSS ---
 
+# ---------------- DATA SOURCE & AUTH CONFIG ----------------
 # ---------------- DATA SOURCE ----------------
 DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/esK39EhRdJ3yz4wXMsKrJiC/data.xlsx"
 MAIN_SHEET = "mortality_pilot_cluster_two-..."
@@ -53,9 +78,16 @@ FEMALES_SHEET = "female"
 PREG_SHEET = "pregnancy_history"
 
 
-# --- SOP Lookup Table (Cleaned for robust parsing) ---
-# NOTE: The data below has been formatted using consistent single tabs (\t) 
-# to resolve the previous ParserError.
+# --- AUTHENTICATION LOGIC: Define the ten distinct wards AND the Admin role ---
+ADMIN_USER = 'Admin' # Super Admin Username
+ALLOWED_WARDS = {
+    'Bare_Bari', 'Bolewa_A', 'Bolewa_B', 'Danchuwa', 'Dogo_Nini',
+    'Dogo_Tebo', 'Hausawa_Asibiti', 'Mamudo', 'Ngojin_Alaraba', 'Yerimaram'
+}
+ALL_ACCESS_USERS = ALLOWED_WARDS.union({ADMIN_USER})
+# ----------------------------------------------------
+
+# --- SOP Lookup Table (Using the provided string data) ---
 SOP_DATA = """
 lga_Label	ward_Label	settlement_Label	Community_ID
 Potiskum	Bare_Bari	Kandahar	B-11_14_1_1
@@ -159,35 +191,67 @@ Potiskum	Yerimaram	Nahuta_Pri_School	B-11_14_10_8
 Potiskum	Yerimaram	Mai_Anguwa_Yakubu_33	B-11_14_10_9
 Potiskum	Yerimaram	Mai_Anguwa_Sale	B-11_14_10_10
 """
-
-# Load SOP data into a DataFrame
 try:
-    # Use StringIO to read the string data and ensure sep='\t' and skipinitialspace=True
     SOP_DF = pd.read_csv(StringIO(SOP_DATA), sep='\t', skipinitialspace=True)
-    
-    # Define expected columns for validation
     EXPECTED_SOP_COLUMNS = ['lga_Label', 'ward_Label', 'settlement_Label', 'Community_ID']
-    
-    # Validate the column names after loading
-    if list(SOP_DF.columns) != EXPECTED_SOP_COLUMNS:
-        st.error("❌ SOP Data Loading Error: Column headers were not parsed correctly. Check the tabs/spaces in the header row.")
-        SOP_COMMUNITY_MAP = {}
-    else:
-        # Create a dictionary map from Community_ID (code) to settlement_Label (name)
+    if list(SOP_DF.columns) == EXPECTED_SOP_COLUMNS:
         SOP_COMMUNITY_MAP = SOP_DF.set_index('Community_ID')['settlement_Label'].to_dict()
-except Exception as e:
-    st.error(f"❌ Critical SOP Data Parsing Failed: {e}. Please ensure the data rows and headers are separated by a single tab.")
+    else:
+        SOP_COMMUNITY_MAP = {}
+except Exception:
     SOP_COMMUNITY_MAP = {}
 
 
-# ---------------- SAFE DATA LOADER ----------------
+# ---------------- LOGIN PAGE FUNCTIONS ----------------
+def show_login_page():
+    """Displays the login page at the top and handles authentication."""
+    # Hide the sidebar for a clean login page look
+    st.markdown('<style>.stSidebar {display: none;}</style>', unsafe_allow_html=True)
+
+    st.markdown('<div class="login-container-top">', unsafe_allow_html=True)
+    st.markdown("<h1 style='color: #1E88E5;'>Welcome to Supervisors Dashboard</h1>", unsafe_allow_html=True)
+    
+    st.markdown('<div class="login-box">', unsafe_allow_html=True)
+    st.markdown("<h2 style='margin-top: 10px; color: #333;'>Login:</h2>", unsafe_allow_html=True)
+    st.markdown("Enter your **Ward Name** or **Admin** (case-sensitive).")
+
+    # Use a form to handle submission cleanly
+    with st.form("login_form"):
+        ward_input = st.text_input(
+            "Ward Name / Username (e.g., Bare_Bari or Admin)", 
+            key="ward_input",
+        )
+        submitted = st.form_submit_button("Access Dashboard")
+
+        if submitted:
+            if ward_input in ALL_ACCESS_USERS:
+                # Success Logic
+                st.session_state.authenticated_ward = ward_input
+                st.session_state.is_admin = (ward_input == ADMIN_USER) # Check for Admin status
+                st.session_state.page_view = 'dashboard'
+                st.success("✅ **Success:** Access granted! Redirecting...")
+                st.balloons()
+                st.rerun()
+            else:
+                # Failed Logic
+                st.error("❌ **Failed:** Invalid Ward Name or Username. Please check the spelling and casing.")
+
+    # Optional: Display allowed wards for guidance
+    with st.expander("❓ View Available Ward Logins"):
+        st.code(", ".join(sorted(list(ALLOWED_WARDS))), language="markdown")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ---------------- DATA LOADER (No change needed) ----------------
 @st.cache_data(show_spinner="Downloading and processing latest KoboToolbox data...", ttl=600)
 def load_data(force_refresh=False):
     """
     Load the latest data from the server.
     """
     if force_refresh:
-        st.cache_data.clear() # Clear cache on force refresh call
+        st.cache_data.clear()
 
     try:
         response = requests.get(DATA_URL, timeout=60)
@@ -202,11 +266,9 @@ def load_data(force_refresh=False):
         if "start" in df_mortality.columns:
             df_mortality["start"] = pd.to_datetime(df_mortality["start"], errors='coerce')
 
-        # --- Apply Community Code Mapping (CRITICAL FIX) ---
         COMMUNITY_COL_RAW = find_column_with_suffix(df_mortality, "community")
         
         if COMMUNITY_COL_RAW in df_mortality.columns and SOP_COMMUNITY_MAP:
-             # Apply the map. Use the code itself if a mapping is not found (default behavior)
              df_mortality[COMMUNITY_COL_RAW] = df_mortality[COMMUNITY_COL_RAW].astype(str).map(
                  lambda x: SOP_COMMUNITY_MAP.get(x, x)
              )
@@ -217,7 +279,7 @@ def load_data(force_refresh=False):
         st.error(f"❌ Error loading workbook: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-# ---------------- HELPER FUNCTIONS ----------------
+# ---------------- HELPER FUNCTIONS (No change needed) ----------------
 def find_column_with_suffix(df, keyword):
     if df is None or df.empty:
         return None
@@ -236,9 +298,6 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     c_dead_col = find_column_with_suffix(df_females, "c_dead")
     miscarriage_col = find_column_with_suffix(df_females, "misscarraige")
     
-    # *** UPDATED: Explicitly look for a column containing "unique_code" ***
-    # This assumes the full unique code, like 'B-11_14_2_2_025', lives in a column 
-    # named "unique_code" or something similar.
     UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique_code") or 'unique_code_col_not_found' 
     
     # Handle missing columns in sub-tables by creating dummy columns
@@ -257,19 +316,15 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     if UNIQUE_CODE_COL in df_mortality.columns:
         mortality_dupes = df_mortality[df_mortality.duplicated(subset=UNIQUE_CODE_COL, keep=False)]
     else:
-        # Fallback if unique code column is truly missing, resulting in no duplicates flagged
         mortality_dupes = pd.DataFrame()
     
-    # Identify mother and child duplicates based on IDs (assuming mother_id and child_id are consistent)
     females_dupes = df_females[df_females.duplicated(subset="mother_id", keep=False)]
     preg_dupes = df_preg_history[df_preg_history.duplicated(subset="child_id", keep=False)]
 
     dupe_household_uuids = mortality_dupes['_uuid'].unique()
     dupe_mother_uuids = females_dupes['_submission__uuid'].unique()
     dupe_child_uuids = preg_dupes['_submission__uuid'].unique()
-    
-    # ---------------------------------------------------------
-    
+        
     # Aggregate female-level data
     females_agg = df_females.groupby('_submission__uuid').agg({
         c_alive_col: 'sum', c_dead_col: 'sum', miscarriage_col: 'sum',
@@ -289,7 +344,6 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     def per_submission_agg(g):
         born_alive_and_alive = ((g[outcome_col] == "Born Alive") & (g[still_alive_col] == "Yes")).sum()
         later_died = (g[still_alive_col] == "No").sum()
-        # Miscarriage and Born Dead are grouped under Miscarriage_Abortion check
         miscarriage_count = ((g[outcome_col] == "Miscarriage and Abortion") | (g[outcome_col] == "Born dead")).sum()
         born_dead_raw = (g[outcome_col] == "Born dead").sum()
         return pd.Series({
@@ -343,7 +397,6 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
         qc_df["Research_Assistant"] = np.nan
 
     qc_df.drop(columns=["_uuid"], inplace=True, errors='ignore')
-    # Updated divisor to 6 (3 internal checks + 3 duplicate checks)
     qc_df["Error_Percentage"] = (qc_df["Total_Flags"] / 6) * 100 
     return qc_df
 
@@ -358,9 +411,14 @@ def display_qc_metric(col_obj, label, value):
         unsafe_allow_html=True
     )
 
-# ---------------- RUN DASHBOARD ----------------
-def run_dashboard(df_mortality, df_females, df_preg):
+# ---------------- DASHBOARD LOGIC (RUNS AFTER LOGIN) ----------------
+def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admin):
+    
     st.session_state.usage_count += 1
+    
+    # Re-enable sidebar for dashboard view
+    st.markdown('<style>.stSidebar {display: block;}</style>', unsafe_allow_html=True)
+    
     st.markdown(
         f"""
         <div class="usage-bar-container">
@@ -371,20 +429,37 @@ def run_dashboard(df_mortality, df_females, df_preg):
         """,
         unsafe_allow_html=True
     )
+    
+    # --- FILTER DATA FOR THE AUTHENTICATED WARD ---
+    WARD_COL = find_column_with_suffix(df_mortality, "ward") or "Confirm your ward"
+    
+    if not is_admin and WARD_COL in df_mortality.columns:
+        # Ward User Logic: Filter all dataframes
+        df_mortality = df_mortality[df_mortality[WARD_COL] == authenticated_ward].copy()
+        
+        submission_uuids = df_mortality['_uuid'].unique()
+        df_females = df_females[df_females['_submission__uuid'].isin(submission_uuids)].copy()
+        df_preg = df_preg[df_preg['_submission__uuid'].isin(submission_uuids)].copy()
+        
+        st.success(f"✅ Access granted. Displaying data for **{authenticated_ward}** Ward only.")
+        
+    elif is_admin:
+        # Admin Logic: No filtering applied to the dataframes
+        st.warning("👑 **Super Admin Mode:** Displaying **ALL WARDS** data.")
+    else:
+        st.error(f"❌ Error: Ward column ('{WARD_COL}') not found in the mortality data. Cannot apply necessary filters.")
+        return 
 
     if df_females.empty or df_mortality.empty or df_preg.empty:
-        # Display the server error from load_data and stop if dataframes are empty
+        st.warning(f"No data available for the current selection.")
         return 
 
     # ---------------- DYNAMIC COLUMN MAPPING ----------------
     LGA_COL = find_column_with_suffix(df_mortality, "lga") or "Confirm your LGA"
-    WARD_COL = find_column_with_suffix(df_mortality, "ward") or "Confirm your ward"
-    # This column now holds the Community NAME after the mapping in load_data()
     COMMUNITY_COL = find_column_with_suffix(df_mortality, "community") or "Confirm your community" 
     RA_COL = find_column_with_suffix(df_mortality, "name") or "Type in your Name"
     DATE_COL = "start"
     VALIDATION_COL = "_validation_status"
-    # *** UPDATED: Use the specific column name/search term for the unique code ***
     UNIQUE_CODE_COL_RAW = find_column_with_suffix(df_mortality, "unique_code") or find_column_with_suffix(df_mortality, "unique") or 'unique_code' 
     CONSENT_DATE_COL_RAW = find_column_with_suffix(df_mortality, "consent_date") or DATE_COL
     
@@ -393,13 +468,12 @@ def run_dashboard(df_mortality, df_females, df_preg):
     LGA_DISPLAY_NAME = "LGA" 
     WARD_DISPLAY_NAME = "Ward" 
     RA_DISPLAY_NAME = "Enumerator Name"
-    UNIQUE_CODE_DISPLAY_NAME = "unique_code" # *** UPDATED: Set desired display name ***
+    UNIQUE_CODE_DISPLAY_NAME = "unique_code" 
     # -------------------------------------------------------------------
 
     # --- Sidebar Filters ---
     with st.sidebar:
-        st.header("Data Filters")
-        # Use the raw column name for caption/dynamic lookup
+        st.header(f"Data Filters for {authenticated_ward}")
         st.caption(f"LGA: `{LGA_COL}` | RA: `{RA_COL}` | Unique ID Col: `{UNIQUE_CODE_COL_RAW}`")
         st.markdown("---")
 
@@ -411,17 +485,22 @@ def run_dashboard(df_mortality, df_females, df_preg):
         
         def apply_filters(df):
             df_filtered = df.copy()
-            # LGA Filter
-            if lga_filter_ok:
+            
+            # Ward Filter (Always available for Admin, fixed for Ward User)
+            if ward_filter_ok:
+                ward_options = sorted(df_filtered[WARD_COL].dropna().unique())
+                if is_admin:
+                    selected_ward = st.selectbox("Ward", ["All Wards"] + ward_options, index=0)
+                    if selected_ward != "All Wards":
+                        df_filtered = df_filtered[df_filtered[WARD_COL] == selected_ward]
+                else:
+                    st.info(f"🔒 Ward filter is fixed to **{authenticated_ward}**")
+            
+            # LGA Filter 
+            if lga_filter_ok and df_filtered[LGA_COL].nunique() > 1:
                 selected_lga = st.selectbox("LGA", ["All"] + sorted(df_filtered[LGA_COL].dropna().unique()))
                 if selected_lga != "All":
                     df_filtered = df_filtered[df_filtered[LGA_COL] == selected_lga]
-
-            # Ward Filter
-            if ward_filter_ok:
-                selected_ward = st.selectbox("Ward", ["All"] + sorted(df_filtered[WARD_COL].dropna().unique()))
-                if selected_ward != "All":
-                    df_filtered = df_filtered[df_filtered[WARD_COL] == selected_ward]
             
             # Community Filter
             if community_filter_ok:
@@ -443,34 +522,43 @@ def run_dashboard(df_mortality, df_females, df_preg):
                     if selected_date != "All":
                         df_filtered = df_filtered[df_filtered[DATE_COL].dt.date == selected_date]
                 except Exception:
-                    # Silent fail if date parsing fails
                     pass
             return df_filtered
 
-        # Store the original unfiltered data for "Not Approved" table later
         df_mortality_original = df_mortality.copy()
         
-        # Filter the main dataframe used for metrics/QC
         filtered_final = apply_filters(df_mortality)
         
-        # Exclude "Not Approved" records from the main dashboard metrics view
         if VALIDATION_COL in filtered_final.columns:
             df_for_metrics = filtered_final[filtered_final[VALIDATION_COL] != "Not Approved"].copy()
             df_for_metrics[VALIDATION_COL].fillna("Validation Ongoing", inplace=True)
         else:
             df_for_metrics = filtered_final.copy()
 
+        # --- Logout and Force Refresh Buttons ---
+        st.markdown("---")
+        if st.button("🚪 Logout"):
+            st.session_state.authenticated_ward = None
+            st.session_state.is_admin = False
+            st.session_state.page_view = 'login'
+            st.rerun()
+
+        if st.button("🔄 Force Refresh Data"):
+            st.session_state.refresh = True
+            st.rerun()
 
     submission_ids = df_for_metrics['_uuid'].unique()
+    # Note: We must re-filter sub-forms based on the final *filtered* mortality UUIDs
     filtered_females = df_females[df_females['_submission__uuid'].isin(submission_ids)]
     filtered_preg = df_preg[df_preg['_submission__uuid'].isin(submission_ids)]
 
-    # Generate QC data for the full set, then filter by submission_ids
-    df_qc = generate_qc_dataframe(df_mortality, df_females, df_preg)
+    # Generate QC data for the current subset of data
+    df_qc = generate_qc_dataframe(df_mortality, df_females, df_preg) 
     filtered_df = df_qc[df_qc['_submission__uuid'].isin(df_for_metrics['_uuid'])]
 
     # --- Dashboard Title & Metrics ---
-    st.markdown('<div class="big-title">SARMAAN II - QC Dashboard - Cluster2</div>', unsafe_allow_html=True)
+    dashboard_title = f"SARMAAN II - QC Dashboard - {authenticated_ward} {'(Admin)' if is_admin else 'Ward'}"
+    st.markdown(f'<div class="big-title">{dashboard_title}</div>', unsafe_allow_html=True)
     st.caption("Data Quality Control and Monitoring")
 
     st.subheader("🎯 Operational Metrics")
@@ -517,7 +605,7 @@ def run_dashboard(df_mortality, df_females, df_preg):
             display_cols = [col for col in display_cols if col in not_approved_df.columns]
             
             display_na_df = not_approved_df[display_cols].rename(columns={
-                UNIQUE_CODE_COL_RAW: UNIQUE_CODE_DISPLAY_NAME, # *** UPDATED DISPLAY NAME ***
+                UNIQUE_CODE_COL_RAW: UNIQUE_CODE_DISPLAY_NAME, 
                 RA_COL: RA_DISPLAY_NAME,
                 LGA_COL: LGA_DISPLAY_NAME,
                 WARD_COL: WARD_DISPLAY_NAME,
@@ -565,7 +653,7 @@ def run_dashboard(df_mortality, df_females, df_preg):
             
             display_dupe_df = duplicate_households[display_dupe_cols].rename(columns={
                 '_uuid': 'Submission UUID',
-                UNIQUE_CODE_COL_RAW: UNIQUE_CODE_DISPLAY_NAME, # *** UPDATED DISPLAY NAME ***
+                UNIQUE_CODE_COL_RAW: UNIQUE_CODE_DISPLAY_NAME, 
                 RA_COL: RA_DISPLAY_NAME,
                 LGA_COL: LGA_DISPLAY_NAME,
                 WARD_COL: WARD_DISPLAY_NAME,
@@ -578,7 +666,6 @@ def run_dashboard(df_mortality, df_females, df_preg):
                      display_dupe_df['Submission Date'], errors='coerce'
                  ).dt.strftime('%Y-%m-%d %H:%M')
 
-            # Update the warning message to reflect the new display name
             st.dataframe(display_dupe_df, use_container_width=True, height=300)
             st.warning(f"❗ **{len(display_dupe_df):,}** submissions share the same **{UNIQUE_CODE_DISPLAY_NAME}**. They should be reviewed.")
         else:
@@ -608,7 +695,7 @@ def run_dashboard(df_mortality, df_females, df_preg):
     display_df.rename(columns={
         LGA_COL: LGA_DISPLAY_NAME, WARD_COL: WARD_DISPLAY_NAME, COMMUNITY_COL: COMMUNITY_DISPLAY_NAME,
         'Total_Flags': 'Total Flags', 'Error_Percentage': 'Error %', '_submission__uuid': 'Submission UUID',
-        UNIQUE_CODE_COL_RAW: UNIQUE_CODE_DISPLAY_NAME, # *** UPDATED DISPLAY NAME ***
+        UNIQUE_CODE_COL_RAW: UNIQUE_CODE_DISPLAY_NAME, 
         CONSENT_DATE_COL_RAW: 'Date of Consent',
         VALIDATION_COL: 'Validation Status', 'Research_Assistant': RA_DISPLAY_NAME 
     }, inplace=True)
@@ -626,16 +713,34 @@ def run_dashboard(df_mortality, df_females, df_preg):
         st.info("🎉 No internal or cross-check errors found in the current filtered data.")
 
 
-# ---------------- FORCE REFRESH BUTTON ----------------
-with st.sidebar:
-    st.markdown("---")
-    if st.button("🔄 Force Refresh Data"):
-        st.session_state.refresh = True
-        # Rerunning the script will trigger the load_data with force_refresh=True
-        st.rerun()
+# ---------------- MAIN APP LOGIC ----------------
+if st.session_state.page_view == 'login':
+    # If not authenticated, show the login page
+    show_login_page()
+    
+elif st.session_state.page_view == 'dashboard':
+    # If authenticated, load data and show the dashboard
+    force_refresh_flag = st.session_state.get('refresh', False)
+    
+    # Check if data exists in cache or needs a refresh
+    if 'df_mortality' not in st.session_state or force_refresh_flag:
+        # Load full data first (Admin or Ward User gets the same full dataset from the web)
+        df_mortality, df_females, df_preg = load_data(force_refresh=force_refresh_flag)
+        st.session_state.df_mortality = df_mortality
+        st.session_state.df_females = df_females
+        st.session_state.df_preg = df_preg
+    else:
+        df_mortality = st.session_state.df_mortality
+        df_females = st.session_state.df_females
+        df_preg = st.session_state.df_preg
+        
+    st.session_state.refresh = False # Reset the flag after check
 
-# ---------------- INITIAL LOAD ----------------
-force_refresh_flag = st.session_state.get('refresh', False)
-df_mortality, df_females, df_preg = load_data(force_refresh=force_refresh_flag)
-st.session_state.refresh = False # Reset the flag after loading
-run_dashboard(df_mortality, df_females, df_preg)
+    # Run dashboard with the authenticated user's context
+    run_dashboard(
+        df_mortality, 
+        df_females, 
+        df_preg, 
+        st.session_state.authenticated_ward,
+        st.session_state.is_admin
+    )
