@@ -236,7 +236,7 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     c_dead_col = find_column_with_suffix(df_females, "c_dead")
     miscarriage_col = find_column_with_suffix(df_females, "misscarraige")
     
-    UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique") or 'unique_code'
+    UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique_code") or 'unique_code_code'
     
     # Handle missing columns in sub-tables by creating dummy columns
     female_cols = {
@@ -250,7 +250,7 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
             female_cols[name] = dummy_col
     c_alive_col, c_dead_col, miscarriage_col, boys_dead_col, girls_dead_col = female_cols.values()
 
-    # --- Household Duplicate Check (Confirmed to use UNIQUE_CODE_COL) ---
+    # --- Household Duplicate Check (Confirmed to use unique_code_CODE_COL) ---
     mortality_dupes = df_mortality[df_mortality.duplicated(subset=UNIQUE_CODE_COL, keep=False)]
     
     # Identify mother and child duplicates based on IDs (assuming mother_id and child_id are consistent)
