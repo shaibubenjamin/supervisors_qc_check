@@ -253,7 +253,7 @@ def load_data(force_refresh=False):
         st.cache_data.clear()
 
     try:
-        response = requests.get(DATA_URL, timeout=60)
+        response = requests.get(DATA_URL, timeout=300)
         response.raise_for_status()
         excel_file = BytesIO(response.content)
         data_dict = pd.read_excel(excel_file, sheet_name=None)
@@ -750,3 +750,4 @@ elif st.session_state.page_view == 'dashboard':
         st.session_state.authenticated_ward,
         st.session_state.is_admin
     )
+
