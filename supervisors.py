@@ -70,7 +70,7 @@ st.markdown(
 )
 # --- END: Custom CSS ---
 
-# ---------------- DATA SOURCE ----------------
+# ---------------- DATA SOURCE & AUTH CONFIG ----------------
 DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/esK39EhRdJ3yz4wXMsKrJiC/data.xlsx"
 MAIN_SHEET = "mortality_pilot_cluster_two-..."
 FEMALES_SHEET = "female"
@@ -199,6 +199,120 @@ try:
         SOP_COMMUNITY_MAP = {}
 except Exception:
     SOP_COMMUNITY_MAP = {}
+
+# --- Community Target Plan Data ---
+TARGET_PLAN_DATA = """
+lga	ward	community	Community_code	Settlement Planned
+Potiskum	Bare_Bari	Kandahar	B-11_14_1_1	21
+Potiskum	Bare_Bari	Unguwan_Kuka	B-11_14_1_2	54
+Potiskum	Bare_Bari	Jigawa_Chadi	B-11_14_1_3	66
+Potiskum	Bare_Bari	Gadama	B-11_14_1_4	29
+Potiskum	Bare_Bari	Ung_Gada	B-11_14_1_5	80
+Potiskum	Bare_Bari	Jigawa_City_Petroleum	B-11_14_1_6	152
+Potiskum	Bare_Bari	Ung_Kuka	B-11_14_1_7	68
+Potiskum	Bare_Bari	Jigawa_Makabarta	B-11_14_1_8	36
+Potiskum	Bare_Bari	Mangorori	B-11_14_1_9	78
+Potiskum	Bare_Bari	Lai_Lai_Madabi	B-11_14_1_10	54
+Potiskum	Bolewa_A	Madu_K_O	B-11_14_2_1	94
+Potiskum	Bolewa_A	Maiung_Galadima	B-11_14_2_2	53
+Potiskum	Bolewa_A	Abba_Sugu	B-11_14_2_3	41
+Potiskum	Bolewa_A	Mai_Ung_Luccu	B-11_14_2_4	94
+Potiskum	Bolewa_A	Mai_Ung_Bomoi_3	B-11_14_2_5	31
+Potiskum	Bolewa_A	Hakimi_Shuaibu_1	B-11_14_2_6	77
+Potiskum	Bolewa_A	Bomoi_Maina	B-11_14_2_7	41
+Potiskum	Bolewa_A	Chiroma	B-11_14_2_8	18
+Potiskum	Bolewa_A	Lamba_Maaji	B-11_14_2_9	93
+Potiskum	Bolewa_A	Yusuf_Kafinta_1	B-11_14_2_10	52
+Potiskum	Bolewa_B	Muhd_Guza	B-11_14_3_1	43
+Potiskum	Bolewa_B	Alhaji_Ibrahim	B-11_14_3_2	103
+Potiskum	Bolewa_B	Mai_Unguwan_Darin	B-11_14_3_3	22
+Potiskum	Bolewa_B	Baba_Sarki	B-11_14_3_4	63
+Potiskum	Bolewa_B	Mallam_Ali	B-11_14_3_5	60
+Potiskum	Bolewa_B	Mai_Unguwan_Hamidu	B-11_14_3_6	43
+Potiskum	Bolewa_B	Maianguwa_Bukar	B-11_14_3_7	30
+Potiskum	Bolewa_B	Usman_Arjali	B-11_14_3_8	72
+Potiskum	Bolewa_B	New_Secretariat	B-11_14_3_9	45
+Potiskum	Bolewa_B	Layin_Palace	B-11_14_3_10	27
+Potiskum	Danchuwa	Garin_Tori	B-11_14_4_1	25
+Potiskum	Danchuwa	Maina_Bujik	B-11_14_4_2	20
+Potiskum	Danchuwa	Garin_Bah	B-11_14_4_3	73
+Potiskum	Danchuwa	Danchuwa_Lamba	B-11_14_4_4	194
+Potiskum	Danchuwa	Makwai_Bulama_Abdu	B-11_14_4_5	132
+Potiskum	Danchuwa	Bogocho	B-11_14_4_6	62
+Potiskum	Danchuwa	Makwai_Bulama_Yau	B-11_14_4_7	168
+Potiskum	Danchuwa	Babaudu	B-11_14_4_8	22
+Potiskum	Danchuwa	Garin_Bade	B-11_14_4_9	21
+Potiskum	Danchuwa	Sabon_Layi	B-11_14_4_10	42
+Potiskum	Dogo_Nini	Coca_Cola	B-11_14_5_1	39
+Potiskum	Dogo_Nini	Mai_Anguwa_Kagazau	B-11_14_5_2	85
+Potiskum	Dogo_Nini	Lamba_Muhd	B-11_14_5_3	106
+Potiskum	Dogo_Nini	Adamu_Wanzam	B-11_14_5_4	219
+Potiskum	Dogo_Nini	Saidu_Manager	B-11_14_5_5	90
+Potiskum	Dogo_Nini	Lamba_Idrissa	B-11_14_5_6	43
+Potiskum	Dogo_Nini	Yan_Shinkafa	B-11_14_5_7	72
+Potiskum	Dogo_Nini	Mai_Anguwa_Babayo	B-11_14_5_8	62
+Potiskum	Dogo_Nini	Yan_Gadaje	B-11_14_5_9	38
+Potiskum	Dogo_Nini	Haruna_Dugum	B-11_14_5_10	51
+Potiskum	Dogo_Tebo	Bayan_Cabs	B-11_14_6_1	522
+Potiskum	Dogo_Tebo	Damboa_Area	B-11_14_6_2	120
+Potiskum	Dogo_Tebo	Hassan_Damboa	B-11_14_6_3	137
+Potiskum	Dogo_Tebo	Jujin_Oc	B-11_14_6_4	55
+Potiskum	Dogo_Tebo	Lamba_Goni	B-11_14_6_5	30
+Potiskum	Dogo_Tebo	Hussaini_Damboa	B-11_14_6_6	50
+Potiskum	Dogo_Tebo	Yankuka	B-11_14_6_7	54
+Potiskum	Dogo_Tebo	Ibrahim_Chana	B-11_14_6_8	35
+Potiskum	Dogo_Tebo	Cabs	B-11_14_6_9	32
+Potiskum	Dogo_Tebo	Tinja_Tuya_Street	B-11_14_6_10	30
+Potiskum	Hausawa_Asibiti	Danjebu	B-11_14_7_1	36
+Potiskum	Hausawa_Asibiti	Bayan_Makabarta	B-11_14_7_2	98
+Potiskum	Hausawa_Asibiti	Mai_Madagali	B-11_14_7_3	75
+Potiskum	Hausawa_Asibiti	Rigiyar_Gardi	B-11_14_7_4	62
+Potiskum	Hausawa_Asibiti	Mai_Saleh	B-11_14_7_5	133
+Potiskum	Hausawa_Asibiti	Alhaji_Mato	B-11_14_7_6	22
+Potiskum	Hausawa_Asibiti	Musa_Kuku	B-11_14_7_7	49
+Potiskum	Hausawa_Asibiti	Yaro_Gambo	B-11_14_7_8	63
+Potiskum	Hausawa_Asibiti	Wakili_Audu	B-11_14_7_9	305
+Potiskum	Hausawa_Asibiti	Mai_Usman	B-11_14_7_10	30
+Potiskum	Mamudo	Unguwan_Ali	B-11_14_8_1	67
+Potiskum	Mamudo	Gumbakuku	B-11_14_8_2	55
+Potiskum	Mamudo	Marke_Chayi	B-11_14_8_3	65
+Potiskum	Mamudo	Bubaram_Bilal_Dambam	B-11_14_8_4	57
+Potiskum	Mamudo	Sandawai	B-11_14_8_5	92
+Potiskum	Mamudo	Bula_Hc	B-11_14_8_6	70
+Potiskum	Mamudo	Kama_Kirji	B-11_14_8_7	109
+Potiskum	Mamudo	Zagam	B-11_14_8_8	65
+Potiskum	Mamudo	Adaya_Pri_Sch	B-11_14_8_9	141
+Potiskum	Mamudo	Maina_Buba	B-11_14_8_10	30
+Potiskum	Ngojin_Alaraba	Tokare	B-11_14_9_1	23
+Potiskum	Ngojin_Alaraba	Mbalido	B-11_14_9_2	20
+Potiskum	Ngojin_Alaraba	Hadijam_Gubdo	B-11_14_9_3	38
+Potiskum	Ngojin_Alaraba	Garin_Dala	B-11_14_9_4	140
+Potiskum	Ngojin_Alaraba	Mai_Turare	B-11_14_9_5	20
+Potiskum	Ngojin_Alaraba	Badejo	B-11_14_9_6	118
+Potiskum	Ngojin_Alaraba	Arjali	B-11_14_9_7	34
+Potiskum	Ngojin_Alaraba	Fara_Fara_Bulama	B-11_14_9_8	77
+Potiskum	Ngojin_Alaraba	Mai_Jaarma	B-11_14_9_9	120
+Potiskum	Ngojin_Alaraba	Bulakos	B-11_14_9_10	51
+Potiskum	Yerimaram	Nasarawa_B	B-11_14_10_1	286
+Potiskum	Yerimaram	Yerimaram_Bulama_Lamba_Zubairu	B-11_14_10_2	138
+Potiskum	Yerimaram	Kabono	B-11_14_10_3	238
+Potiskum	Yerimaram	Yawachi	B-11_14_10_4	898
+Potiskum	Yerimaram	Nahuta_Babban_Layi	B-11_14_10_5	34
+Potiskum	Yerimaram	Travellers	B-11_14_10_6	250
+Potiskum	Yerimaram	Hon_Sani	B-11_14_10_7	129
+Potiskum	Yerimaram	Nahuta_Pri_School	B-11_14_10_8	307
+Potiskum	Yerimaram	Mai_Anguwa_Yakubu_33	B-11_14_10_9	148
+Potiskum	Yerimaram	Mai_Anguwa_Sale	B-11_14_10_10	36
+"""
+try:
+    TARGET_PLAN_DF = pd.read_csv(StringIO(TARGET_PLAN_DATA), sep='\t', skipinitialspace=True)
+    # Rename columns for consistency
+    TARGET_PLAN_DF.columns = TARGET_PLAN_DF.columns.str.strip()
+    if 'Settlement Planned' in TARGET_PLAN_DF.columns:
+        TARGET_PLAN_DF.rename(columns={'Settlement Planned': 'Target_Plan'}, inplace=True)
+    TARGET_PLAN_DF['Target_Plan'] = pd.to_numeric(TARGET_PLAN_DF['Target_Plan'], errors='coerce').fillna(0).astype(int)
+except Exception:
+    TARGET_PLAN_DF = pd.DataFrame()
 
 
 # ---------------- LOGIN PAGE FUNCTIONS ----------------
@@ -411,6 +525,78 @@ def display_qc_metric(col_obj, label, value):
         """,
         unsafe_allow_html=True
     )
+
+def generate_coverage_scorecard(df_mortality_full, df_mortality_for_metrics, target_plan_df, ward_col, community_col, unique_code_col, validation_col):
+    """
+    Generate a Community Coverage Scorecard comparing target plans with actual submissions.
+    
+    Parameters:
+    - df_mortality_full: Full mortality dataframe (includes all records)
+    - df_mortality_for_metrics: Filtered mortality dataframe (excludes "Not Approved")
+    - target_plan_df: DataFrame with community target plans
+    - ward_col: Name of ward column in df_mortality
+    - community_col: Name of community column in df_mortality
+    - unique_code_col: Name of unique code column for duplicate detection
+    - validation_col: Name of validation status column
+    """
+    
+    if target_plan_df.empty or community_col not in df_mortality_full.columns or ward_col not in df_mortality_full.columns:
+        return pd.DataFrame()
+    
+    # Prepare the target plan data
+    target_plan_df = target_plan_df.copy()
+    target_plan_df['ward'] = target_plan_df['ward'].str.strip()
+    target_plan_df['community'] = target_plan_df['community'].str.strip()
+    
+    # Calculate metrics for each community from actual data
+    scorecard_rows = []
+    
+    for _, target_row in target_plan_df.iterrows():
+        ward_name = target_row['ward']
+        community_name = target_row['community']
+        target_plan = int(target_row.get('Target_Plan', 0))
+        
+        # Filter data for this specific ward and community (from full dataset)
+        community_data_full = df_mortality_full[
+            (df_mortality_full[ward_col] == ward_name) & 
+            (df_mortality_full[community_col] == community_name)
+        ]
+        
+        # Total submissions (all records)
+        total_submissions = len(community_data_full)
+        
+        # Approved records (from metrics dataframe which excludes "Not Approved")
+        community_data_approved = df_mortality_for_metrics[
+            (df_mortality_for_metrics[ward_col] == ward_name) & 
+            (df_mortality_for_metrics[community_col] == community_name)
+        ]
+        approved_count = len(community_data_approved)
+        
+        # Not Approved count
+        if validation_col in community_data_full.columns:
+            not_approved_count = (community_data_full[validation_col] == "Not Approved").sum()
+        else:
+            not_approved_count = 0
+        
+        # Outstanding = Target - Approved
+        outstanding = max(0, target_plan - approved_count)
+        
+        scorecard_rows.append({
+            'Ward': ward_name,
+            'Community': community_name,
+            'Target Plan': target_plan,
+            'Total Submissions': total_submissions,
+            'Approved Record': approved_count,
+            'Not Approved': not_approved_count,
+            'Outstanding': outstanding
+        })
+    
+    scorecard_df = pd.DataFrame(scorecard_rows)
+    
+    # Sort by Ward and Community
+    scorecard_df = scorecard_df.sort_values(by=['Ward', 'Community']).reset_index(drop=True)
+    
+    return scorecard_df
 
 # ---------------- DASHBOARD LOGIC (RUNS AFTER LOGIN) ----------------
 def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admin):
@@ -630,6 +816,69 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
     else:
         st.error(f"❌ Cannot display 'Not Approved' table. Validation Status column ('{VALIDATION_COL}') not found.")
 
+    # ---------------- Community Coverage Scorecard ----------------
+    st.markdown("---")
+    st.subheader("📊 Community Coverage Scorecard (Target Plan vs. Submissions)")
+    
+    if not TARGET_PLAN_DF.empty:
+        # Generate the coverage scorecard
+        coverage_scorecard = generate_coverage_scorecard(
+            df_mortality_original,  # Full dataset
+            df_for_metrics,         # Filtered dataset (excludes "Not Approved")
+            TARGET_PLAN_DF,
+            WARD_COL,
+            COMMUNITY_COL,
+            UNIQUE_CODE_COL_RAW,
+            VALIDATION_COL
+        )
+        
+        if not coverage_scorecard.empty:
+            # Filter scorecard by authenticated ward (for non-admin users)
+            if not is_admin:
+                coverage_scorecard = coverage_scorecard[coverage_scorecard['Ward'] == authenticated_ward].copy()
+            
+            if not coverage_scorecard.empty:
+                # Summary metrics ABOVE the table (filtered by ward)
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Total Target Plan", f"{coverage_scorecard['Target Plan'].sum():,}")
+                col2.metric("Total Approved", f"{coverage_scorecard['Approved Record'].sum():,}")
+                col3.metric("Total Outstanding", f"{coverage_scorecard['Outstanding'].sum():,}")
+                completion_rate = (coverage_scorecard['Approved Record'].sum() / coverage_scorecard['Target Plan'].sum() * 100) if coverage_scorecard['Target Plan'].sum() > 0 else 0
+                col4.metric("Completion Rate", f"{completion_rate:.1f}%")
+                
+                st.markdown("<br>", unsafe_allow_html=True)  # Add spacing
+                
+                # Apply styling to highlight cells
+                def highlight_coverage(row):
+                    colors = []
+                    for col in row.index:
+                        if col == 'Target Plan' and row['Approved Record'] == row['Target Plan'] and row['Target Plan'] > 0:
+                            # Green if approved equals target
+                            colors.append('background-color: #c8e6c9')
+                        elif col == 'Approved Record' and row['Approved Record'] == row['Target Plan'] and row['Target Plan'] > 0:
+                            # Green if approved equals target
+                            colors.append('background-color: #c8e6c9')
+                        elif col == 'Outstanding' and row['Outstanding'] > 0:
+                            # Light red if there are outstanding households
+                            colors.append('background-color: #ffebee')
+                        else:
+                            colors.append('')
+                    return colors
+                
+                # Display the scorecard
+                st.dataframe(
+                    coverage_scorecard.style.apply(highlight_coverage, axis=1),
+                    use_container_width=True,
+                    height=400
+                )
+            else:
+                st.info(f"📋 No coverage scorecard data available for **{authenticated_ward}** ward.")
+            
+        else:
+            st.info("📋 No coverage scorecard data available for the current selection.")
+    else:
+        st.warning("⚠️ Target plan data not loaded. Cannot generate coverage scorecard.")
+
     # ---------------- Errors by Enumerator ----------------
     st.markdown("---")
     st.subheader("📈 QC Errors by Enumerator (Excluding 'Not Approved')")
@@ -750,4 +999,3 @@ elif st.session_state.page_view == 'dashboard':
         st.session_state.authenticated_ward,
         st.session_state.is_admin
     )
-
