@@ -1,7 +1,7 @@
 # ================================
 # SARMAAN II UPDATED QC DASHBOARD (OPTIMIZED + FORCE REFRESH + LIVE DATA)
 # IMPLEMENTS: Dedicated Login Page Structure + Super Admin Access + Logout
-# CHANGE: Moved Login to Top of Page, Added "Welcome" Header, Specific Login Messages
+# CRITICAL FIX: Duplicate Household check now EXCLUDES records with 'Not Approved' status.
 # ================================
 
 from datetime import date
@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 import requests
-from io import BytesIO, StringIO 
+from io import BytesIO, StringIO
 
 # ---------------- SESSION STATE INITIALIZATION ----------------
 if 'usage_count' not in st.session_state:
@@ -19,9 +19,9 @@ if 'refresh' not in st.session_state:
 if 'force_refresh_trigger' not in st.session_state:
     st.session_state.force_refresh_trigger = False
 if 'authenticated_ward' not in st.session_state:
-    st.session_state.authenticated_ward = None 
+    st.session_state.authenticated_ward = None
 if 'page_view' not in st.session_state:
-    st.session_state.page_view = 'login' 
+    st.session_state.page_view = 'login'
 if 'is_admin' not in st.session_state:
     st.session_state.is_admin = False # New state for Admin check
 
@@ -61,8 +61,8 @@ st.markdown(
         max-width: 400px;
         margin: 0 auto; /* Center the box */
     }
-    .stSidebar { display: none; } 
-    .dashboard-sidebar { display: block !important; } 
+    .stSidebar { display: none; }
+    .dashboard-sidebar { display: block !important; }
 
     </style>
     """,
@@ -144,7 +144,7 @@ Potiskum	Dogo_Tebo	Hassan_Damboa	B-11_14_6_3
 Potiskum	Dogo_Tebo	Jujin_Oc	B-11_14_6_4
 Potiskum	Dogo_Tebo	Lamba_Goni	B-11_14_6_5
 Potiskum	Dogo_Tebo	Hussaini_Damboa	B-11_14_6_6
-Potiskum	Dogo_Tebo	Yankuka	B-11_14_6_7
+Gombe	Dogo_Tebo	Yankuka	B-11_14_6_7
 Potiskum	Dogo_Tebo	Ibrahim_Chana	B-11_14_6_8
 Potiskum	Dogo_Tebo	Cabs	B-11_14_6_9
 Potiskum	Dogo_Tebo	Tinja_Tuya_Street	B-11_14_6_10
@@ -270,7 +270,7 @@ def load_data(force_refresh=False):
              df_mortality[COMMUNITY_COL_RAW] = df_mortality[COMMUNITY_COL_RAW].astype(str).map(
                  lambda x: SOP_COMMUNITY_MAP.get(x, x)
              )
-        
+            
         return df_mortality, df_females, df_preg
 
     except Exception as e:
@@ -311,6 +311,8 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     c_alive_col, c_dead_col, miscarriage_col, boys_dead_col, girls_dead_col = female_cols.values()
 
     # --- Household Duplicate Check ---
+    # NOTE: The duplication check below is for the QC_Issues flag which is applied to ALL records.
+    # The display of duplicate records later in run_dashboard filters out "Not Approved" using df_for_metrics.
     if UNIQUE_CODE_COL in df_mortality.columns:
         mortality_dupes = df_mortality[df_mortality.duplicated(subset=UNIQUE_CODE_COL, keep=False)]
     else:
@@ -528,9 +530,11 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
         filtered_final = apply_filters(df_mortality)
         
         if VALIDATION_COL in filtered_final.columns:
+            # df_for_metrics EXCLUDES "Not Approved"
             df_for_metrics = filtered_final[filtered_final[VALIDATION_COL] != "Not Approved"].copy()
             df_for_metrics[VALIDATION_COL].fillna("Validation Ongoing", inplace=True)
         else:
+            # If no validation column, assume all are 'Validation Ongoing' for metrics
             df_for_metrics = filtered_final.copy()
 
         # --- Logout and Force Refresh Buttons ---
@@ -594,6 +598,7 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
     st.subheader("❌ Submissions **NOT APPROVED** (Action: Recollection Required)")
     
     if VALIDATION_COL in df_mortality_original.columns:
+        # Use the original full dataset (filtered only by Ward)
         not_approved_df = df_mortality_original[df_mortality_original[VALIDATION_COL] == "Not Approved"].copy()
 
         if not not_approved_df.empty:
@@ -639,6 +644,7 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
     st.subheader("🏠 Duplicate Household Submissions (Excluding 'Not Approved')")
     
     if UNIQUE_CODE_COL_RAW in df_for_metrics.columns:
+        # CRITICAL FIX: Use df_for_metrics here. It already excludes "Not Approved" records.
         dupe_mask = df_for_metrics.duplicated(subset=UNIQUE_CODE_COL_RAW, keep=False)
         duplicate_households = df_for_metrics[dupe_mask].sort_values(by=UNIQUE_CODE_COL_RAW).copy()
 
@@ -663,7 +669,7 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
                  display_dupe_df['Submission Date'] = pd.to_datetime(
                      display_dupe_df['Submission Date'], errors='coerce'
                  ).dt.strftime('%Y-%m-%d %H:%M')
-
+                 
             st.dataframe(display_dupe_df, use_container_width=True, height=300)
             st.warning(f"❗ **{len(display_dupe_df):,}** submissions share the same **{UNIQUE_CODE_DISPLAY_NAME}**. They should be reviewed.")
         else:
@@ -677,6 +683,7 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
     st.subheader("📋 Detailed Internal/Cross-Check Error Records (Excluding 'Not Approved')")
     display_df = filtered_df[filtered_df['Total_Flags'] > 0].copy()
     
+    # Use df_for_metrics for merging, as it contains the filtered metadata (excluding 'Not Approved')
     dupe_cols = ['_uuid', UNIQUE_CODE_COL_RAW, CONSENT_DATE_COL_RAW, VALIDATION_COL, LGA_COL, WARD_COL, COMMUNITY_COL, RA_COL]
     present_dupe_cols = [col for col in dupe_cols if col in df_for_metrics.columns]
     dupe_df = df_for_metrics[present_dupe_cols].rename(columns={'_uuid': '_submission__uuid'}).copy()
