@@ -27,7 +27,7 @@ if 'is_admin' not in st.session_state:
 
 # ---------------- CONFIG ----------------
 st.set_page_config(
-    page_title="SARMAAN II QC Dashboard CLUSTER 2",
+    page_title="SARMAAN II QC Dashboard CLUSTER 1",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -71,11 +71,10 @@ st.markdown(
 # --- END: Custom CSS ---
 
 # ---------------- DATA SOURCE & AUTH CONFIG ----------------
-DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/esK39EhRdJ3yz4wXMsKrJiC/data.xlsx"
-MAIN_SHEET = "mortality_pilot_cluster_two-..."
+DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/abHEibtwS6VnYHZHgupcLR/export-settings/esm7VCuQFJLhymWZPrNhDtg/data.xlsx"
+MAIN_SHEET = "mortality_pilot_cluster_one-..."
 FEMALES_SHEET = "female"
 PREG_SHEET = "pregnancy_history"
-
 
 # --- AUTHENTICATION LOGIC: Define the ten distinct wards AND the Admin role ---
 ADMIN_USER = 'Admin' # Super Admin Username
@@ -325,7 +324,7 @@ def show_login_page():
     st.markdown("<h1 style='color: #1E88E5;'>Welcome to Supervisors Dashboard</h1>", unsafe_allow_html=True)
     
     st.markdown('<div class="login-box">', unsafe_allow_html=True)
-    st.markdown("<h2 style='margin-top: 10px; color: #333;'>Cluster2 Login:</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='margin-top: 10px; color: #333;'>Cluster1 Login:</h2>", unsafe_allow_html=True)
     st.markdown("Enter your **Ward Name** or **Admin** (case-sensitive).")
 
     # Use a form to handle submission cleanly
@@ -779,42 +778,6 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
         display_qc_metric(cols[3], "Born Alive Mismatch", born_alive_mismatch)
         display_qc_metric(cols[4], "B.Alive, Later Died Mismatch", later_died_mismatch)
         display_qc_metric(cols[5], "Miscarriage Mismatch", miscarriage_mismatch)
-
-    # ---------------- Not Approved Table ----------------
-    st.markdown("---")
-    st.subheader("❌ Submissions **NOT APPROVED** (Action: Recollection Required)")
-    
-    if VALIDATION_COL in df_mortality_original.columns:
-        # Use the original full dataset (filtered only by Ward)
-        not_approved_df = df_mortality_original[df_mortality_original[VALIDATION_COL] == "Not Approved"].copy()
-
-        if not not_approved_df.empty:
-            not_approved_df['Validation Status'] = "Not Approved"
-            
-            display_cols = ['Validation Status', UNIQUE_CODE_COL_RAW, RA_COL, LGA_COL, WARD_COL, COMMUNITY_COL, DATE_COL]
-            display_cols = [col for col in display_cols if col in not_approved_df.columns]
-            
-            display_na_df = not_approved_df[display_cols].rename(columns={
-                UNIQUE_CODE_COL_RAW: UNIQUE_CODE_DISPLAY_NAME, 
-                RA_COL: RA_DISPLAY_NAME,
-                LGA_COL: LGA_DISPLAY_NAME,
-                WARD_COL: WARD_DISPLAY_NAME,
-                COMMUNITY_COL: COMMUNITY_DISPLAY_NAME, 
-                DATE_COL: 'Submission Date'
-            })
-            
-            if 'Submission Date' in display_na_df.columns:
-                 display_na_df['Submission Date'] = pd.to_datetime(
-                     display_na_df['Submission Date'], errors='coerce'
-                 ).dt.strftime('%Y-%m-%d %H:%M')
-            
-            st.dataframe(display_na_df, use_container_width=True, height=300)
-            st.error(f"🔴 **Total Not Approved:** {len(display_na_df):,} submissions must be revisited/recollected.")
-
-        else:
-            st.info("✅ No 'Not Approved' submissions found in the current filter selection.")
-    else:
-        st.error(f"❌ Cannot display 'Not Approved' table. Validation Status column ('{VALIDATION_COL}') not found.")
 
     # ---------------- Community Coverage Scorecard ----------------
     st.markdown("---")
