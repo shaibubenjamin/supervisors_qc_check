@@ -27,7 +27,7 @@ if 'is_admin' not in st.session_state:
 
 # ---------------- CONFIG ----------------
 st.set_page_config(
-    page_title="SARMAAN II QC Dashboard CLUSTER 1",
+    page_title="SARMAAN II QC Dashboard CLUSTER 2",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -71,10 +71,12 @@ st.markdown(
 # --- END: Custom CSS ---
 
 # ---------------- DATA SOURCE & AUTH CONFIG ----------------
-DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/abHEibtwS6VnYHZHgupcLR/export-settings/esm7VCuQFJLhymWZPrNhDtg/data.xlsx"
-MAIN_SHEET = "mortality_pilot_cluster_one-..."
+
+DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/esK39EhRdJ3yz4wXMsKrJiC/data.xlsx"
+MAIN_SHEET = "mortality_pilot_cluster_two-..."
 FEMALES_SHEET = "female"
 PREG_SHEET = "pregnancy_history"
+
 
 # --- AUTHENTICATION LOGIC: Define the ten distinct wards AND the Admin role ---
 ADMIN_USER = 'Admin' # Super Admin Username
@@ -324,7 +326,7 @@ def show_login_page():
     st.markdown("<h1 style='color: #1E88E5;'>Welcome to Supervisors Dashboard</h1>", unsafe_allow_html=True)
     
     st.markdown('<div class="login-box">', unsafe_allow_html=True)
-    st.markdown("<h2 style='margin-top: 10px; color: #333;'>Cluster1 Login:</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='margin-top: 10px; color: #333;'>Cluster2 Login:</h2>", unsafe_allow_html=True)
     st.markdown("Enter your **Ward Name** or **Admin** (case-sensitive).")
 
     # Use a form to handle submission cleanly
