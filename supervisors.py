@@ -71,12 +71,12 @@ st.markdown(
 )
 # --- END: Custom CSS ---
 
-# ---------------- DATA SOURCE & AUTH CONFIG ----------------
-
-DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/es9hcDqsH4KUV4cTi6u7Fri/data.xlsx"
+# ---------------- DATA SOURCE ----------------
+DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/esK39EhRdJ3yz4wXMsKrJiC/data.xlsx"
 MAIN_SHEET = "mortality_pilot_cluster_two-..."
 FEMALES_SHEET = "female"
 PREG_SHEET = "pregnancy_history"
+
 
 # --- AUTHENTICATION LOGIC ---
 ADMIN_USER = 'Admin'
@@ -323,7 +323,7 @@ def show_login_page():
     st.markdown("<h1 style='color: #1E88E5;'>Welcome to Supervisors Dashboard</h1>", unsafe_allow_html=True)
     
     st.markdown('<div class="login-box">', unsafe_allow_html=True)
-    st.markdown("<h2 style='margin-top: 10px; color: #333;'>Cluster1 Login:</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='margin-top: 10px; color: #333;'>Cluster2 Login:</h2>", unsafe_allow_html=True)
     st.markdown("Enter your **Ward Name** or **Admin** (case-sensitive).")
 
     with st.form("login_form"):
@@ -423,21 +423,30 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
             female_cols[name] = dummy_col
     c_alive_col, c_dead_col, miscarriage_col, boys_dead_col, girls_dead_col = female_cols.values()
 
-    # --- CRITICAL FIX: Household Duplicate Check ONLY for Approved/On Hold ---
+    # --- CRITICAL FIX: Household, Mother, and Child Duplicate Check ONLY for Approved/On Hold ---
     # Filter out "Not Approved" records BEFORE checking for duplicates
     if VALIDATION_COL in df_mortality.columns:
         df_mortality_for_dupe_check = df_mortality[df_mortality[VALIDATION_COL] != "Not Approved"].copy()
+        # Get the list of approved/on-hold submission UUIDs
+        approved_uuids = df_mortality_for_dupe_check['_uuid'].unique()
     else:
         # If validation column doesn't exist, use all records
         df_mortality_for_dupe_check = df_mortality.copy()
+        approved_uuids = df_mortality['_uuid'].unique()
     
+    # Check household duplicates (already filtered)
     if UNIQUE_CODE_COL in df_mortality_for_dupe_check.columns:
         mortality_dupes = df_mortality_for_dupe_check[df_mortality_for_dupe_check.duplicated(subset=UNIQUE_CODE_COL, keep=False)]
     else:
         mortality_dupes = pd.DataFrame()
     
-    females_dupes = df_females[df_females.duplicated(subset="mother_id", keep=False)]
-    preg_dupes = df_preg_history[df_preg_history.duplicated(subset="child_id", keep=False)]
+    # Filter females and pregnancy history to ONLY include approved/on-hold records
+    df_females_for_dupe_check = df_females[df_females['_submission__uuid'].isin(approved_uuids)]
+    df_preg_for_dupe_check = df_preg_history[df_preg_history['_submission__uuid'].isin(approved_uuids)]
+    
+    # Check mother and child duplicates (now filtered to exclude "Not Approved")
+    females_dupes = df_females_for_dupe_check[df_females_for_dupe_check.duplicated(subset="mother_id", keep=False)]
+    preg_dupes = df_preg_for_dupe_check[df_preg_for_dupe_check.duplicated(subset="child_id", keep=False)]
 
     dupe_household_uuids = mortality_dupes['_uuid'].unique()
     dupe_mother_uuids = females_dupes['_submission__uuid'].unique()
