@@ -2,6 +2,7 @@
 # SARMAAN II UPDATED QC DASHBOARD (OPTIMIZED + FORCE REFRESH + LIVE DATA)
 # IMPLEMENTS: Dedicated Login Page Structure + Super Admin Access + Logout
 # CRITICAL FIX: Duplicate Household check now EXCLUDES records with 'Not Approved' status.
+# UPDATED: Duplicate detection now only considers 'Approved' and 'On Hold' records
 # ================================
 
 from datetime import date
@@ -23,7 +24,7 @@ if 'authenticated_ward' not in st.session_state:
 if 'page_view' not in st.session_state:
     st.session_state.page_view = 'login'
 if 'is_admin' not in st.session_state:
-    st.session_state.is_admin = False # New state for Admin check
+    st.session_state.is_admin = False
 
 # ---------------- CONFIG ----------------
 st.set_page_config(
@@ -46,7 +47,7 @@ st.markdown(
     .usage-bar-container { padding: 5px 15px; background-color: rgb(232, 245, 233); border-radius: 0.5rem; margin-bottom: 15px; border: 1px solid rgb(76, 175, 80); display: flex; align-items: center; justify-content: space-between; }
     .usage-text { color: rgb(76, 175, 80); font-weight: 600; font-size: 0.9rem; }
 
-    /* Login Page Specific Styles - Simplified to put container at top */
+    /* Login Page Specific Styles */
     .login-container-top {
         padding: 30px 0;
         text-align: center;
@@ -59,7 +60,7 @@ st.markdown(
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
         width: 100%;
         max-width: 400px;
-        margin: 0 auto; /* Center the box */
+        margin: 0 auto;
     }
     .stSidebar { display: none; }
     .dashboard-sidebar { display: block !important; }
@@ -77,17 +78,15 @@ MAIN_SHEET = "mortality_pilot_cluster_two-..."
 FEMALES_SHEET = "female"
 PREG_SHEET = "pregnancy_history"
 
-
-# --- AUTHENTICATION LOGIC: Define the ten distinct wards AND the Admin role ---
-ADMIN_USER = 'Admin' # Super Admin Username
+# --- AUTHENTICATION LOGIC ---
+ADMIN_USER = 'Admin'
 ALLOWED_WARDS = {
     'Bare_Bari', 'Bolewa_A', 'Bolewa_B', 'Danchuwa', 'Dogo_Nini',
     'Dogo_Tebo', 'Hausawa_Asibiti', 'Mamudo', 'Ngojin_Alaraba', 'Yerimaram'
 }
 ALL_ACCESS_USERS = ALLOWED_WARDS.union({ADMIN_USER})
-# ----------------------------------------------------
 
-# --- SOP Lookup Table (Using the provided string data) ---
+# --- SOP Lookup Table ---
 SOP_DATA = """
 lga_Label	ward_Label	settlement_Label	Community_ID
 Potiskum	Bare_Bari	Kandahar	B-11_14_1_1
@@ -307,7 +306,6 @@ Potiskum	Yerimaram	Mai_Anguwa_Sale	B-11_14_10_10	36
 """
 try:
     TARGET_PLAN_DF = pd.read_csv(StringIO(TARGET_PLAN_DATA), sep='\t', skipinitialspace=True)
-    # Rename columns for consistency
     TARGET_PLAN_DF.columns = TARGET_PLAN_DF.columns.str.strip()
     if 'Settlement Planned' in TARGET_PLAN_DF.columns:
         TARGET_PLAN_DF.rename(columns={'Settlement Planned': 'Target_Plan'}, inplace=True)
@@ -319,17 +317,15 @@ except Exception:
 # ---------------- LOGIN PAGE FUNCTIONS ----------------
 def show_login_page():
     """Displays the login page at the top and handles authentication."""
-    # Hide the sidebar for a clean login page look
     st.markdown('<style>.stSidebar {display: none;}</style>', unsafe_allow_html=True)
 
     st.markdown('<div class="login-container-top">', unsafe_allow_html=True)
     st.markdown("<h1 style='color: #1E88E5;'>Welcome to Supervisors Dashboard</h1>", unsafe_allow_html=True)
     
     st.markdown('<div class="login-box">', unsafe_allow_html=True)
-    st.markdown("<h2 style='margin-top: 10px; color: #333;'>Cluster2 Login:</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='margin-top: 10px; color: #333;'>Cluster1 Login:</h2>", unsafe_allow_html=True)
     st.markdown("Enter your **Ward Name** or **Admin** (case-sensitive).")
 
-    # Use a form to handle submission cleanly
     with st.form("login_form"):
         ward_input = st.text_input(
             "Ward Name / Username (e.g., Bare_Bari or Admin)", 
@@ -339,18 +335,15 @@ def show_login_page():
 
         if submitted:
             if ward_input in ALL_ACCESS_USERS:
-                # Success Logic
                 st.session_state.authenticated_ward = ward_input
-                st.session_state.is_admin = (ward_input == ADMIN_USER) # Check for Admin status
+                st.session_state.is_admin = (ward_input == ADMIN_USER)
                 st.session_state.page_view = 'dashboard'
                 st.success("✅ **Success:** Access granted! Redirecting...")
                 st.balloons()
                 st.rerun()
             else:
-                # Failed Logic
                 st.error("❌ **Failed:** Invalid Ward Name or Username. Please check the spelling and casing.")
 
-    # Optional: Display allowed wards for guidance
     with st.expander("❓ View Available Ward Logins"):
         st.code(", ".join(sorted(list(ALLOWED_WARDS))), language="markdown")
 
@@ -358,12 +351,10 @@ def show_login_page():
     st.markdown('</div>', unsafe_allow_html=True)
 
 
-# ---------------- DATA LOADER (No change needed) ----------------
+# ---------------- DATA LOADER ----------------
 @st.cache_data(show_spinner="Downloading and processing latest KoboToolbox data...", ttl=600)
 def load_data(force_refresh=False):
-    """
-    Load the latest data from the server.
-    """
+    """Load the latest data from the server."""
     if force_refresh:
         st.cache_data.clear()
 
@@ -393,7 +384,7 @@ def load_data(force_refresh=False):
         st.error(f"❌ Error loading workbook: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-# ---------------- HELPER FUNCTIONS (No change needed) ----------------
+# ---------------- HELPER FUNCTIONS ----------------
 def find_column_with_suffix(df, keyword):
     if df is None or df.empty:
         return None
@@ -403,6 +394,11 @@ def find_column_with_suffix(df, keyword):
     return None
 
 def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
+    """
+    Generate QC dataframe with error detection.
+    CRITICAL: Duplicate household detection now ONLY considers records that are 'Approved' or 'On Hold',
+    excluding 'Not Approved' records entirely from duplication logic.
+    """
     # Dynamic column finding
     outcome_col = find_column_with_suffix(df_preg_history, "Was the baby born alive")
     still_alive_col = find_column_with_suffix(df_preg_history, "still alive")
@@ -412,7 +408,8 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     c_dead_col = find_column_with_suffix(df_females, "c_dead")
     miscarriage_col = find_column_with_suffix(df_females, "misscarraige")
     
-    UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique_code") or 'unique_code_col_not_found' 
+    UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique_code") or 'unique_code_col_not_found'
+    VALIDATION_COL = '_validation_status'
     
     # Handle missing columns in sub-tables by creating dummy columns
     female_cols = {
@@ -426,11 +423,16 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
             female_cols[name] = dummy_col
     c_alive_col, c_dead_col, miscarriage_col, boys_dead_col, girls_dead_col = female_cols.values()
 
-    # --- Household Duplicate Check ---
-    # NOTE: The duplication check below is for the QC_Issues flag which is applied to ALL records.
-    # The display of duplicate records later in run_dashboard filters out "Not Approved" using df_for_metrics.
-    if UNIQUE_CODE_COL in df_mortality.columns:
-        mortality_dupes = df_mortality[df_mortality.duplicated(subset=UNIQUE_CODE_COL, keep=False)]
+    # --- CRITICAL FIX: Household Duplicate Check ONLY for Approved/On Hold ---
+    # Filter out "Not Approved" records BEFORE checking for duplicates
+    if VALIDATION_COL in df_mortality.columns:
+        df_mortality_for_dupe_check = df_mortality[df_mortality[VALIDATION_COL] != "Not Approved"].copy()
+    else:
+        # If validation column doesn't exist, use all records
+        df_mortality_for_dupe_check = df_mortality.copy()
+    
+    if UNIQUE_CODE_COL in df_mortality_for_dupe_check.columns:
+        mortality_dupes = df_mortality_for_dupe_check[df_mortality_for_dupe_check.duplicated(subset=UNIQUE_CODE_COL, keep=False)]
     else:
         mortality_dupes = pd.DataFrame()
     
@@ -485,7 +487,7 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
         if c_dead_col and int(row[c_dead_col]) != int(row['Later_Died']):
             errors.append("Born Alive but Later Died mismatch")
             
-        # Duplication Errors
+        # Duplication Errors (now ONLY includes Approved/On Hold duplicates)
         if uuid in dupe_household_uuids:
             errors.append("Duplicate Household")
         if uuid in dupe_mother_uuids:
@@ -528,28 +530,15 @@ def display_qc_metric(col_obj, label, value):
     )
 
 def generate_coverage_scorecard(df_mortality_full, df_mortality_for_metrics, target_plan_df, ward_col, community_col, unique_code_col, validation_col):
-    """
-    Generate a Community Coverage Scorecard comparing target plans with actual submissions.
-    
-    Parameters:
-    - df_mortality_full: Full mortality dataframe (includes all records)
-    - df_mortality_for_metrics: Filtered mortality dataframe (excludes "Not Approved")
-    - target_plan_df: DataFrame with community target plans
-    - ward_col: Name of ward column in df_mortality
-    - community_col: Name of community column in df_mortality
-    - unique_code_col: Name of unique code column for duplicate detection
-    - validation_col: Name of validation status column
-    """
+    """Generate a Community Coverage Scorecard comparing target plans with actual submissions."""
     
     if target_plan_df.empty or community_col not in df_mortality_full.columns or ward_col not in df_mortality_full.columns:
         return pd.DataFrame()
     
-    # Prepare the target plan data
     target_plan_df = target_plan_df.copy()
     target_plan_df['ward'] = target_plan_df['ward'].str.strip()
     target_plan_df['community'] = target_plan_df['community'].str.strip()
     
-    # Calculate metrics for each community from actual data
     scorecard_rows = []
     
     for _, target_row in target_plan_df.iterrows():
@@ -557,29 +546,24 @@ def generate_coverage_scorecard(df_mortality_full, df_mortality_for_metrics, tar
         community_name = target_row['community']
         target_plan = int(target_row.get('Target_Plan', 0))
         
-        # Filter data for this specific ward and community (from full dataset)
         community_data_full = df_mortality_full[
             (df_mortality_full[ward_col] == ward_name) & 
             (df_mortality_full[community_col] == community_name)
         ]
         
-        # Total submissions (all records)
         total_submissions = len(community_data_full)
         
-        # Approved records (from metrics dataframe which excludes "Not Approved")
         community_data_approved = df_mortality_for_metrics[
             (df_mortality_for_metrics[ward_col] == ward_name) & 
             (df_mortality_for_metrics[community_col] == community_name)
         ]
         approved_count = len(community_data_approved)
         
-        # Not Approved count
         if validation_col in community_data_full.columns:
             not_approved_count = (community_data_full[validation_col] == "Not Approved").sum()
         else:
             not_approved_count = 0
         
-        # Outstanding = Target - Approved
         outstanding = max(0, target_plan - approved_count)
         
         scorecard_rows.append({
@@ -593,18 +577,15 @@ def generate_coverage_scorecard(df_mortality_full, df_mortality_for_metrics, tar
         })
     
     scorecard_df = pd.DataFrame(scorecard_rows)
-    
-    # Sort by Ward and Community
     scorecard_df = scorecard_df.sort_values(by=['Ward', 'Community']).reset_index(drop=True)
     
     return scorecard_df
 
-# ---------------- DASHBOARD LOGIC (RUNS AFTER LOGIN) ----------------
+# ---------------- DASHBOARD LOGIC ----------------
 def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admin):
     
     st.session_state.usage_count += 1
     
-    # Re-enable sidebar for dashboard view
     st.markdown('<style>.stSidebar {display: block;}</style>', unsafe_allow_html=True)
     
     st.markdown(
@@ -622,7 +603,6 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
     WARD_COL = find_column_with_suffix(df_mortality, "ward") or "Confirm your ward"
     
     if not is_admin and WARD_COL in df_mortality.columns:
-        # Ward User Logic: Filter all dataframes
         df_mortality = df_mortality[df_mortality[WARD_COL] == authenticated_ward].copy()
         
         submission_uuids = df_mortality['_uuid'].unique()
@@ -632,7 +612,6 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
         st.success(f"✅ Access granted. Displaying data for **{authenticated_ward}** Ward only.")
         
     elif is_admin:
-        # Admin Logic: No filtering applied to the dataframes
         st.warning("👑 **Super Admin Mode:** Displaying **ALL WARDS** data.")
     else:
         st.error(f"❌ Error: Ward column ('{WARD_COL}') not found in the mortality data. Cannot apply necessary filters.")
@@ -657,7 +636,6 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
     WARD_DISPLAY_NAME = "Ward" 
     RA_DISPLAY_NAME = "Enumerator Name"
     UNIQUE_CODE_DISPLAY_NAME = "unique_code" 
-    # -------------------------------------------------------------------
 
     # --- Sidebar Filters ---
     with st.sidebar:
@@ -665,7 +643,6 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
         st.caption(f"LGA: `{LGA_COL}` | RA: `{RA_COL}` | Unique ID Col: `{UNIQUE_CODE_COL_RAW}`")
         st.markdown("---")
 
-        # Safely determine if columns exist for filtering
         lga_filter_ok = LGA_COL in df_mortality.columns
         ward_filter_ok = WARD_COL in df_mortality.columns
         community_filter_ok = COMMUNITY_COL in df_mortality.columns
@@ -674,7 +651,6 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
         def apply_filters(df):
             df_filtered = df.copy()
             
-            # Ward Filter (Always available for Admin, fixed for Ward User)
             if ward_filter_ok:
                 ward_options = sorted(df_filtered[WARD_COL].dropna().unique())
                 if is_admin:
@@ -684,19 +660,16 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
                 else:
                     st.info(f"🔒 Ward filter is fixed to **{authenticated_ward}**")
             
-            # LGA Filter 
             if lga_filter_ok and df_filtered[LGA_COL].nunique() > 1:
                 selected_lga = st.selectbox("LGA", ["All"] + sorted(df_filtered[LGA_COL].dropna().unique()))
                 if selected_lga != "All":
                     df_filtered = df_filtered[df_filtered[LGA_COL] == selected_lga]
             
-            # Community Filter
             if community_filter_ok:
                 selected_community = st.selectbox(COMMUNITY_DISPLAY_NAME, ["All"] + sorted(df_filtered[COMMUNITY_COL].dropna().unique()))
                 if selected_community != "All":
                     df_filtered = df_filtered[df_filtered[COMMUNITY_COL] == selected_community]
 
-            # RA Filter
             if ra_filter_ok:
                 selected_ra = st.selectbox("Research Assistant", ["All"] + sorted(df_filtered[RA_COL].dropna().unique()))
                 if selected_ra != "All":
@@ -718,14 +691,11 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
         filtered_final = apply_filters(df_mortality)
         
         if VALIDATION_COL in filtered_final.columns:
-            # df_for_metrics EXCLUDES "Not Approved"
             df_for_metrics = filtered_final[filtered_final[VALIDATION_COL] != "Not Approved"].copy()
             df_for_metrics[VALIDATION_COL].fillna("Validation Ongoing", inplace=True)
         else:
-            # If no validation column, assume all are 'Validation Ongoing' for metrics
             df_for_metrics = filtered_final.copy()
 
-        # --- Logout and Force Refresh Buttons ---
         st.markdown("---")
         if st.button("🚪 Logout"):
             st.session_state.authenticated_ward = None
@@ -738,11 +708,10 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
             st.rerun()
 
     submission_ids = df_for_metrics['_uuid'].unique()
-    # Note: We must re-filter sub-forms based on the final *filtered* mortality UUIDs
     filtered_females = df_females[df_females['_submission__uuid'].isin(submission_ids)]
     filtered_preg = df_preg[df_preg['_submission__uuid'].isin(submission_ids)]
 
-    # Generate QC data for the current subset of data
+    # Generate QC data
     df_qc = generate_qc_dataframe(df_mortality, df_females, df_preg) 
     filtered_df = df_qc[df_qc['_submission__uuid'].isin(df_for_metrics['_uuid'])]
 
@@ -786,10 +755,9 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
     st.subheader("📊 Community Coverage Scorecard (Target Plan vs. Submissions)")
     
     if not TARGET_PLAN_DF.empty:
-        # Generate the coverage scorecard
         coverage_scorecard = generate_coverage_scorecard(
-            df_mortality_original,  # Full dataset
-            df_for_metrics,         # Filtered dataset (excludes "Not Approved")
+            df_mortality_original,
+            df_for_metrics,
             TARGET_PLAN_DF,
             WARD_COL,
             COMMUNITY_COL,
@@ -798,12 +766,10 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
         )
         
         if not coverage_scorecard.empty:
-            # Filter scorecard by authenticated ward (for non-admin users)
             if not is_admin:
                 coverage_scorecard = coverage_scorecard[coverage_scorecard['Ward'] == authenticated_ward].copy()
             
             if not coverage_scorecard.empty:
-                # Summary metrics ABOVE the table (filtered by ward)
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("Total Target Plan", f"{coverage_scorecard['Target Plan'].sum():,}")
                 col2.metric("Total Approved", f"{coverage_scorecard['Approved Record'].sum():,}")
@@ -811,26 +777,21 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
                 completion_rate = (coverage_scorecard['Approved Record'].sum() / coverage_scorecard['Target Plan'].sum() * 100) if coverage_scorecard['Target Plan'].sum() > 0 else 0
                 col4.metric("Completion Rate", f"{completion_rate:.1f}%")
                 
-                st.markdown("<br>", unsafe_allow_html=True)  # Add spacing
+                st.markdown("<br>", unsafe_allow_html=True)
                 
-                # Apply styling to highlight cells
                 def highlight_coverage(row):
                     colors = []
                     for col in row.index:
                         if col == 'Target Plan' and row['Approved Record'] == row['Target Plan'] and row['Target Plan'] > 0:
-                            # Green if approved equals target
                             colors.append('background-color: #c8e6c9')
                         elif col == 'Approved Record' and row['Approved Record'] == row['Target Plan'] and row['Target Plan'] > 0:
-                            # Green if approved equals target
                             colors.append('background-color: #c8e6c9')
                         elif col == 'Outstanding' and row['Outstanding'] > 0:
-                            # Light red if there are outstanding households
                             colors.append('background-color: #ffebee')
                         else:
                             colors.append('')
                     return colors
                 
-                # Display the scorecard
                 st.dataframe(
                     coverage_scorecard.style.apply(highlight_coverage, axis=1),
                     use_container_width=True,
@@ -855,18 +816,19 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
         color="#D32F2F"
     )
 
-    # ---------------- DUPLICATE HOUSEHOLD RECORDS ----------------
-    st.subheader("🏠 Duplicate Household Submissions (Excluding 'Not Approved')")
+    # ---------------- DUPLICATE HOUSEHOLD RECORDS (FIXED) ----------------
+    st.subheader("🏠 Duplicate Household Submissions (Only Approved/On Hold)")
+    st.caption("⚠️ Note: 'Not Approved' records are excluded from duplicate detection")
     
     if UNIQUE_CODE_COL_RAW in df_for_metrics.columns:
-        # CRITICAL FIX: Use df_for_metrics here. It already excludes "Not Approved" records.
+        # CRITICAL: Use df_for_metrics which already excludes "Not Approved"
         dupe_mask = df_for_metrics.duplicated(subset=UNIQUE_CODE_COL_RAW, keep=False)
         duplicate_households = df_for_metrics[dupe_mask].sort_values(by=UNIQUE_CODE_COL_RAW).copy()
 
         if not duplicate_households.empty:
             display_dupe_cols = [
                 '_uuid', UNIQUE_CODE_COL_RAW, RA_COL, LGA_COL, WARD_COL, 
-                COMMUNITY_COL, DATE_COL
+                COMMUNITY_COL, DATE_COL, VALIDATION_COL
             ]
             display_dupe_cols = [col for col in display_dupe_cols if col in duplicate_households.columns]
             
@@ -878,6 +840,7 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
                 WARD_COL: WARD_DISPLAY_NAME,
                 COMMUNITY_COL: COMMUNITY_DISPLAY_NAME,
                 DATE_COL: 'Submission Date',
+                VALIDATION_COL: 'Validation Status'
             })
             
             if 'Submission Date' in display_dupe_df.columns:
@@ -886,9 +849,9 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
                  ).dt.strftime('%Y-%m-%d %H:%M')
                  
             st.dataframe(display_dupe_df, use_container_width=True, height=300)
-            st.warning(f"❗ **{len(display_dupe_df):,}** submissions share the same **{UNIQUE_CODE_DISPLAY_NAME}**. They should be reviewed.")
+            st.warning(f"❗ **{len(display_dupe_df):,}** submissions share the same **{UNIQUE_CODE_DISPLAY_NAME}** (excluding 'Not Approved'). They should be reviewed.")
         else:
-            st.info("✅ No duplicate household submissions found in the current filter selection.")
+            st.info("✅ No duplicate household submissions found in Approved/On Hold records.")
     else:
         st.error(f"❌ Cannot check for household duplicates. Unique Code column ('{UNIQUE_CODE_COL_RAW}') not found.")
 
@@ -898,7 +861,6 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
     st.subheader("📋 Detailed Internal/Cross-Check Error Records (Excluding 'Not Approved')")
     display_df = filtered_df[filtered_df['Total_Flags'] > 0].copy()
     
-    # Use df_for_metrics for merging, as it contains the filtered metadata (excluding 'Not Approved')
     dupe_cols = ['_uuid', UNIQUE_CODE_COL_RAW, CONSENT_DATE_COL_RAW, VALIDATION_COL, LGA_COL, WARD_COL, COMMUNITY_COL, RA_COL]
     present_dupe_cols = [col for col in dupe_cols if col in df_for_metrics.columns]
     dupe_df = df_for_metrics[present_dupe_cols].rename(columns={'_uuid': '_submission__uuid'}).copy()
@@ -913,20 +875,33 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
     display_df.drop(columns=["Research_Assistant_Merge"], inplace=True, errors='ignore')
 
     display_df.rename(columns={
-        LGA_COL: LGA_DISPLAY_NAME, WARD_COL: WARD_DISPLAY_NAME, COMMUNITY_COL: COMMUNITY_DISPLAY_NAME,
-        'Total_Flags': 'Total Flags', 'Error_Percentage': 'Error %', '_submission__uuid': 'Submission UUID',
+        LGA_COL: LGA_DISPLAY_NAME, 
+        WARD_COL: WARD_DISPLAY_NAME, 
+        COMMUNITY_COL: COMMUNITY_DISPLAY_NAME,
+        'Total_Flags': 'Total Flags', 
+        'Error_Percentage': 'Error %', 
+        '_submission__uuid': 'Submission UUID',
         UNIQUE_CODE_COL_RAW: UNIQUE_CODE_DISPLAY_NAME, 
         CONSENT_DATE_COL_RAW: 'Date of Consent',
-        VALIDATION_COL: 'Validation Status', 'Research_Assistant': RA_DISPLAY_NAME 
+        VALIDATION_COL: 'Validation Status', 
+        'Research_Assistant': RA_DISPLAY_NAME 
     }, inplace=True)
-    
+
     display_cols = [
-        'Submission UUID', UNIQUE_CODE_DISPLAY_NAME, RA_DISPLAY_NAME, 'Total Flags', 
-        'Error %', 'QC_Issues', LGA_DISPLAY_NAME, WARD_DISPLAY_NAME, COMMUNITY_DISPLAY_NAME, 
-        'Date of Consent', 'Validation Status'
+        'Submission UUID', 
+        UNIQUE_CODE_DISPLAY_NAME, 
+        RA_DISPLAY_NAME, 
+        'Total Flags', 
+        'Error %', 
+        'QC_Issues', 
+        LGA_DISPLAY_NAME, 
+        WARD_DISPLAY_NAME, 
+        COMMUNITY_DISPLAY_NAME, 
+        'Date of Consent', 
+        'Validation Status'
     ]
     display_cols = [col for col in display_cols if col in display_df.columns]
-    
+
     if not display_df.empty:
         st.dataframe(display_df[display_cols], use_container_width=True, height=500)
     else:
@@ -937,11 +912,11 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
 if st.session_state.page_view == 'login':
     # If not authenticated, show the login page
     show_login_page()
-    
+
 elif st.session_state.page_view == 'dashboard':
     # If authenticated, load data and show the dashboard
     force_refresh_flag = st.session_state.get('refresh', False)
-    
+
     # Check if data exists in cache or needs a refresh
     if 'df_mortality' not in st.session_state or force_refresh_flag:
         # Load full data first (Admin or Ward User gets the same full dataset from the web)
@@ -954,14 +929,13 @@ elif st.session_state.page_view == 'dashboard':
         df_females = st.session_state.df_females
         df_preg = st.session_state.df_preg
         
-    st.session_state.refresh = False # Reset the flag after check
+    st.session_state.refresh = False  # Reset the flag after check
 
     # Run dashboard with the authenticated user's context
     run_dashboard(
-        df_mortality, 
-        df_females, 
-        df_preg, 
-        st.session_state.authenticated_ward,
-        st.session_state.is_admin
-    )
-
+    df_mortality, 
+    df_females, 
+    df_preg, 
+    st.session_state.authenticated_ward,
+    st.session_state.is_admin
+)
