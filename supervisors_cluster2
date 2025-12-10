@@ -1,5 +1,8 @@
 # ================================
-# SARMAAN II UPDATED QC DASHBOARD (OPTIMIZED + FORCE REFRESH + DYNAMIC KPIs)
+# SARMAAN II UPDATED QC DASHBOARD (OPTIMIZED + FORCE REFRESH + LIVE DATA)
+# IMPLEMENTS: Dedicated Login Page Structure + Super Admin Access + Logout
+# CRITICAL FIX: Duplicate Household check now EXCLUDES records with 'Not Approved' status.
+# UPDATED: Duplicate detection now only considers 'Approved' and 'On Hold' records
 # ================================
 
 from datetime import date
@@ -7,175 +10,456 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 import requests
-from io import BytesIO
+from io import BytesIO, StringIO
 
 # ---------------- SESSION STATE INITIALIZATION ----------------
 if 'usage_count' not in st.session_state:
     st.session_state.usage_count = 0
 if 'refresh' not in st.session_state:
     st.session_state.refresh = False
+if 'force_refresh_trigger' not in st.session_state:
+    st.session_state.force_refresh_trigger = False
+if 'authenticated_ward' not in st.session_state:
+    st.session_state.authenticated_ward = None
+if 'page_view' not in st.session_state:
+    st.session_state.page_view = 'login'
+if 'is_admin' not in st.session_state:
+    st.session_state.is_admin = False
 
 # ---------------- CONFIG ----------------
 st.set_page_config(
-    page_title="SARMAAN II QC Dashboard",
+    page_title="SARMAAN II QC Dashboard CLUSTER 2",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- START: Custom CSS for light mode aesthetics and cleaner look ---
+# --- START: Custom CSS ---
 st.markdown(
     """
     <style>
-    /* Ensure Light Mode dominance and clean aesthetic */
-    
-    /* 1. Dashboard Title Styling (Changed to Pure Black) */
-    .big-title {
-        font-size: 2.5em;
-        font-weight: 700;
-        color: #000000; /* Pure Black as requested */
-        margin-bottom: 0.5em;
-    }
+    /* General styles for the main dashboard */
+    .big-title { font-size: 2.5em; font-weight: 700; color: #000000; margin-bottom: 0.5em; }
+    [data-testid="stMetricLabel"] { font-size: 0.9rem; font-weight: 600; color: #708090; }
+    h2 { border-bottom: 2px solid #f0f2f6; padding-bottom: 10px; margin-top: 1.5em; color: #333333; }
+    .stDataFrame, .stTable { width: 100% !important; }
+    .custom-metric-value { font-size: 2rem; font-weight: 600; margin-top: 0px; }
+    .custom-metric-label { font-size: 0.9rem; font-weight: 600; color: #708090; margin-bottom: 0px; }
+    .usage-bar-container { padding: 5px 15px; background-color: rgb(232, 245, 233); border-radius: 0.5rem; margin-bottom: 15px; border: 1px solid rgb(76, 175, 80); display: flex; align-items: center; justify-content: space-between; }
+    .usage-text { color: rgb(76, 175, 80); font-weight: 600; font-size: 0.9rem; }
 
-    /* 2. Streamlit Metric Enhancements */
-    /* stMetricValue is styled by the custom metric function for consistency */
-    [data-testid="stMetricLabel"] {
-        font-size: 0.9rem;
-        font-weight: 600;
-        color: #708090; /* Slate Gray for labels */
+    /* Login Page Specific Styles */
+    .login-container-top {
+        padding: 30px 0;
+        text-align: center;
+        width: 100%;
     }
+    .login-box {
+        background-color: #ffffff;
+        padding: 30px 40px;
+        border-radius: 10px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        width: 100%;
+        max-width: 400px;
+        margin: 0 auto;
+    }
+    .stSidebar { display: none; }
+    .dashboard-sidebar { display: block !important; }
 
-    /* 3. Subheader Styling for distinction (ALL H2 ARE DARK: #333333) */
-    h2 {
-        border-bottom: 2px solid #f0f2f6; /* Subtle separator */
-        padding-bottom: 10px;
-        margin-top: 1.5em;
-        color: #333333; /* Dark text for light background */
-    }
-    
-    /* 4. Sidebar enhancements */
-    .stSidebar {
-        background-color: #f7f9fc; /* Very light background for sidebar */
-    }
-    
-    /* 5. Dataframe conditional formatting visibility (re-apply table full width) */
-    .stDataFrame, .stTable {
-        width: 100% !important;
-    }
-    
-    /* 6. Remove excess spacing around columns/containers */
-    .st-emotion-cache-p5m854 { /* Target the main block container */
-        padding-top: 0rem;
-    }
-    
-    /* Style for the custom metric boxes to keep consistency */
-    .custom-metric-value {
-        font-size: 2rem; 
-        font-weight: 600;
-        margin-top: 0px;
-    }
-    .custom-metric-label {
-        font-size: 0.9rem;
-        font-weight: 600;
-        color: #708090;
-        margin-bottom: 0px;
-    }
-    
-    /* 7. Usage Counter Bar Styling (Matching st.success styling - Green) */
-    .usage-bar-container {
-        padding: 5px 15px;
-        /* Using standard success background and border colors for matching shade */
-        background-color: rgb(232, 245, 233); /* Same as st.success background */
-        border-radius: 0.5rem;
-        margin-bottom: 15px;
-        border: 1px solid rgb(76, 175, 80); /* Same as st.success border/icon color */
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-    }
-    .usage-text {
-        color: rgb(76, 175, 80); /* Same as st.success text color */
-        font-weight: 600;
-        font-size: 0.9rem;
-    }
-    
-    /* 8. Target and remove specific elements from Streamlit's rendering */
-    .stSidebar .stSelectbox label {
-        color: #333333; /* Ensure filter labels are dark */
-    }
     </style>
     """,
     unsafe_allow_html=True
 )
 # --- END: Custom CSS ---
 
-
 # ---------------- DATA SOURCE ----------------
-DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/esZsreaSGHjKk2njgSzBoog/data.xlsx"
-MAIN_SHEET = "mortality_pilot_cluster_one-..."
+DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/es9hcDqsH4KUV4cTi6u7Fri/data.xlsx"
+MAIN_SHEET = "mortality_pilot_cluster_two-..."
 FEMALES_SHEET = "female"
 PREG_SHEET = "pregnancy_history"
 
-# ---------------- SAFE DATA LOADER ----------------
-@st.cache_data(show_spinner="⏳ Loading and processing data... Please wait.", ttl=3600)
-def load_data():
+
+# --- AUTHENTICATION LOGIC ---
+ADMIN_USER = 'Admin'
+ALLOWED_WARDS = {
+    'Bare_Bari', 'Bolewa_A', 'Bolewa_B', 'Danchuwa', 'Dogo_Nini',
+    'Dogo_Tebo', 'Hausawa_Asibiti', 'Mamudo', 'Ngojin_Alaraba', 'Yerimaram'
+}
+ALL_ACCESS_USERS = ALLOWED_WARDS.union({ADMIN_USER})
+
+# --- SOP Lookup Table ---
+SOP_DATA = """
+lga_Label	ward_Label	settlement_Label	Community_ID
+Potiskum	Bare_Bari	Kandahar	B-11_14_1_1
+Potiskum	Bare_Bari	Unguwan_Kuka	B-11_14_1_2
+Potiskum	Bare_Bari	Jigawa_Chadi	B-11_14_1_3
+Potiskum	Bare_Bari	Gadama	B-11_14_1_4
+Potiskum	Bare_Bari	Ung_Gada	B-11_14_1_5
+Potiskum	Bare_Bari	Jigawa_City_Petroleum	B-11_14_1_6
+Potiskum	Bare_Bari	Ung_Kuka	B-11_14_1_7
+Potiskum	Bare_Bari	Jigawa_Makabarta	B-11_14_1_8
+Potiskum	Bare_Bari	Mangorori	B-11_14_1_9
+Potiskum	Bare_Bari	Lai_Lai_Madabi	B-11_14_1_10
+Potiskum	Bolewa_A	Madu_K_O	B-11_14_2_1
+Potiskum	Bolewa_A	Maiung_Galadima	B-11_14_2_2
+Potiskum	Bolewa_A	Abba_Sugu	B-11_14_2_3
+Potiskum	Bolewa_A	Mai_Ung_Luccu	B-11_14_2_4
+Potiskum	Bolewa_A	Mai_Ung_Bomoi_3	B-11_14_2_5
+Potiskum	Bolewa_A	Hakimi_Shuaibu_1	B-11_14_2_6
+Potiskum	Bolewa_A	Bomoi_Maina	B-11_14_2_7
+Potiskum	Bolewa_A	Chiroma	B-11_14_2_8
+Potiskum	Bolewa_A	Lamba_Maaji	B-11_14_2_9
+Potiskum	Bolewa_A	Yusuf_Kafinta_1	B-11_14_2_10
+Potiskum	Bolewa_B	Muhd_Guza	B-11_14_3_1
+Potiskum	Bolewa_B	Alhaji_Ibrahim	B-11_14_3_2
+Potiskum	Bolewa_B	Mai_Unguwan_Darin	B-11_14_3_3
+Potiskum	Bolewa_B	Baba_Sarki	B-11_14_3_4
+Potiskum	Bolewa_B	Mallam_Ali	B-11_14_3_5
+Potiskum	Bolewa_B	Mai_Unguwan_Hamidu	B-11_14_3_6
+Potiskum	Bolewa_B	Maianguwa_Bukar	B-11_14_3_7
+Potiskum	Bolewa_B	Usman_Arjali	B-11_14_3_8
+Potiskum	Bolewa_B	New_Secretariat	B-11_14_3_9
+Potiskum	Bolewa_B	Layin_Palace	B-11_14_3_10
+Potiskum	Danchuwa	Garin_Tori	B-11_14_4_1
+Potiskum	Danchuwa	Maina_Bujik	B-11_14_4_2
+Potiskum	Danchuwa	Garin_Bah	B-11_14_4_3
+Potiskum	Danchuwa	Danchuwa_Lamba	B-11_14_4_4
+Potiskum	Danchuwa	Makwai_Bulama_Abdu	B-11_14_4_5
+Potiskum	Danchuwa	Bogocho	B-11_14_4_6
+Potiskum	Danchuwa	Makwai_Bulama_Yau	B-11_14_4_7
+Potiskum	Danchuwa	Babaudu	B-11_14_4_8
+Potiskum	Danchuwa	Garin_Bade	B-11_14_4_9
+Potiskum	Danchuwa	Sabon_Layi	B-11_14_4_10
+Potiskum	Dogo_Nini	Coca_Cola	B-11_14_5_1
+Potiskum	Dogo_Nini	Mai_Anguwa_Kagazau	B-11_14_5_2
+Potiskum	Dogo_Nini	Lamba_Muhd	B-11_14_5_3
+Potiskum	Dogo_Nini	Adamu_Wanzam	B-11_14_5_4
+Potiskum	Dogo_Nini	Saidu_Manager	B-11_14_5_5
+Potiskum	Dogo_Nini	Lamba_Idrissa	B-11_14_5_6
+Gombe	Dogo_Nini	Yan_Shinkafa	B-11_14_5_7
+Gombe	Dogo_Nini	Mai_Anguwa_Babayo	B-11_14_5_8
+Potiskum	Dogo_Nini	Yan_Gadaje	B-11_14_5_9
+Potiskum	Dogo_Nini	Haruna_Dugum	B-11_14_5_10
+Potiskum	Dogo_Tebo	Bayan_Cabs	B-11_14_6_1
+Potiskum	Dogo_Tebo	Damboa_Area	B-11_14_6_2
+Potiskum	Dogo_Tebo	Hassan_Damboa	B-11_14_6_3
+Potiskum	Dogo_Tebo	Jujin_Oc	B-11_14_6_4
+Potiskum	Dogo_Tebo	Lamba_Goni	B-11_14_6_5
+Potiskum	Dogo_Tebo	Hussaini_Damboa	B-11_14_6_6
+Gombe	Dogo_Tebo	Yankuka	B-11_14_6_7
+Potiskum	Dogo_Tebo	Ibrahim_Chana	B-11_14_6_8
+Potiskum	Dogo_Tebo	Cabs	B-11_14_6_9
+Potiskum	Dogo_Tebo	Tinja_Tuya_Street	B-11_14_6_10
+Potiskum	Hausawa_Asibiti	Danjebu	B-11_14_7_1
+Potiskum	Hausawa_Asibiti	Bayan_Makabarta	B-11_14_7_2
+Potiskum	Hausawa_Asibiti	Mai_Madagali	B-11_14_7_3
+Potiskum	Hausawa_Asibiti	Rigiyar_Gardi	B-11_14_7_4
+Potiskum	Hausawa_Asibiti	Mai_Saleh	B-11_14_7_5
+Potiskum	Hausawa_Asibiti	Alhaji_Mato	B-11_14_7_6
+Potiskum	Hausawa_Asibiti	Musa_Kuku	B-11_14_7_7
+Potiskum	Hausawa_Asibiti	Yaro_Gambo	B-11_14_7_8
+Potiskum	Hausawa_Asibiti	Wakili_Audu	B-11_14_7_9
+Potiskum	Hausawa_Asibiti	Mai_Usman	B-11_14_7_10
+Potiskum	Mamudo	Unguwan_Ali	B-11_14_8_1
+Potiskum	Mamudo	Gumbakuku	B-11_14_8_2
+Potiskum	Mamudo	Marke_Chayi	B-11_14_8_3
+Potiskum	Mamudo	Bubaram_Bilal_Dambam	B-11_14_8_4
+Potiskum	Mamudo	Sandawai	B-11_14_8_5
+Potiskum	Mamudo	Bula_Hc	B-11_14_8_6
+Potiskum	Mamudo	Kama_Kirji	B-11_14_8_7
+Potiskum	Mamudo	Zagam	B-11_14_8_8
+Potiskum	Mamudo	Adaya_Pri_Sch	B-11_14_8_9
+Potiskum	Mamudo	Maina_Buba	B-11_14_8_10
+Potiskum	Ngojin_Alaraba	Tokare	B-11_14_9_1
+Potiskum	Ngojin_Alaraba	Mbalido	B-11_14_9_2
+Potiskum	Ngojin_Alaraba	Hadijam_Gubdo	B-11_14_9_3
+Potiskum	Ngojin_Alaraba	Garin_Dala	B-11_14_9_4
+Potiskum	Ngojin_Alaraba	Mai_Turare	B-11_14_9_5
+Potiskum	Ngojin_Alaraba	Badejo	B-11_14_9_6
+Potiskum	Ngojin_Alaraba	Arjali	B-11_14_9_7
+Potiskum	Ngojin_Alaraba	Fara_Fara_Bulama	B-11_14_9_8
+Potiskum	Ngojin_Alaraba	Mai_Jaarma	B-11_14_9_9
+Potiskum	Ngojin_Alaraba	Bulakos	B-11_14_9_10
+Potiskum	Yerimaram	Nasarawa_B	B-11_14_10_1
+Potiskum	Yerimaram	Yerimaram_Bulama_Lamba_Zubairu	B-11_14_10_2
+Potiskum	Yerimaram	Kabono	B-11_14_10_3
+Potiskum	Yerimaram	Yawachi	B-11_14_10_4
+Potiskum	Yerimaram	Nahuta_Babban_Layi	B-11_14_10_5
+Potiskum	Yerimaram	Travellers	B-11_14_10_6
+Potiskum	Yerimaram	Hon_Sani	B-11_14_10_7
+Potiskum	Yerimaram	Nahuta_Pri_School	B-11_14_10_8
+Potiskum	Yerimaram	Mai_Anguwa_Yakubu_33	B-11_14_10_9
+Potiskum	Yerimaram	Mai_Anguwa_Sale	B-11_14_10_10
+"""
+try:
+    SOP_DF = pd.read_csv(StringIO(SOP_DATA), sep='\t', skipinitialspace=True)
+    EXPECTED_SOP_COLUMNS = ['lga_Label', 'ward_Label', 'settlement_Label', 'Community_ID']
+    if list(SOP_DF.columns) == EXPECTED_SOP_COLUMNS:
+        SOP_COMMUNITY_MAP = SOP_DF.set_index('Community_ID')['settlement_Label'].to_dict()
+    else:
+        SOP_COMMUNITY_MAP = {}
+except Exception:
+    SOP_COMMUNITY_MAP = {}
+
+# --- Community Target Plan Data ---
+TARGET_PLAN_DATA = """
+lga	ward	community	Community_code	Settlement Planned
+Potiskum	Bare_Bari	Kandahar	B-11_14_1_1	21
+Potiskum	Bare_Bari	Unguwan_Kuka	B-11_14_1_2	54
+Potiskum	Bare_Bari	Jigawa_Chadi	B-11_14_1_3	66
+Potiskum	Bare_Bari	Gadama	B-11_14_1_4	29
+Potiskum	Bare_Bari	Ung_Gada	B-11_14_1_5	80
+Potiskum	Bare_Bari	Jigawa_City_Petroleum	B-11_14_1_6	152
+Potiskum	Bare_Bari	Ung_Kuka	B-11_14_1_7	68
+Potiskum	Bare_Bari	Jigawa_Makabarta	B-11_14_1_8	36
+Potiskum	Bare_Bari	Mangorori	B-11_14_1_9	78
+Potiskum	Bare_Bari	Lai_Lai_Madabi	B-11_14_1_10	54
+Potiskum	Bolewa_A	Madu_K_O	B-11_14_2_1	94
+Potiskum	Bolewa_A	Maiung_Galadima	B-11_14_2_2	53
+Potiskum	Bolewa_A	Abba_Sugu	B-11_14_2_3	41
+Potiskum	Bolewa_A	Mai_Ung_Luccu	B-11_14_2_4	94
+Potiskum	Bolewa_A	Mai_Ung_Bomoi_3	B-11_14_2_5	31
+Potiskum	Bolewa_A	Hakimi_Shuaibu_1	B-11_14_2_6	77
+Potiskum	Bolewa_A	Bomoi_Maina	B-11_14_2_7	41
+Potiskum	Bolewa_A	Chiroma	B-11_14_2_8	18
+Potiskum	Bolewa_A	Lamba_Maaji	B-11_14_2_9	93
+Potiskum	Bolewa_A	Yusuf_Kafinta_1	B-11_14_2_10	52
+Potiskum	Bolewa_B	Muhd_Guza	B-11_14_3_1	43
+Potiskum	Bolewa_B	Alhaji_Ibrahim	B-11_14_3_2	103
+Potiskum	Bolewa_B	Mai_Unguwan_Darin	B-11_14_3_3	22
+Potiskum	Bolewa_B	Baba_Sarki	B-11_14_3_4	63
+Potiskum	Bolewa_B	Mallam_Ali	B-11_14_3_5	60
+Potiskum	Bolewa_B	Mai_Unguwan_Hamidu	B-11_14_3_6	43
+Potiskum	Bolewa_B	Maianguwa_Bukar	B-11_14_3_7	30
+Potiskum	Bolewa_B	Usman_Arjali	B-11_14_3_8	72
+Potiskum	Bolewa_B	New_Secretariat	B-11_14_3_9	45
+Potiskum	Bolewa_B	Layin_Palace	B-11_14_3_10	27
+Potiskum	Danchuwa	Garin_Tori	B-11_14_4_1	25
+Potiskum	Danchuwa	Maina_Bujik	B-11_14_4_2	20
+Potiskum	Danchuwa	Garin_Bah	B-11_14_4_3	73
+Potiskum	Danchuwa	Danchuwa_Lamba	B-11_14_4_4	194
+Potiskum	Danchuwa	Makwai_Bulama_Abdu	B-11_14_4_5	132
+Potiskum	Danchuwa	Bogocho	B-11_14_4_6	62
+Potiskum	Danchuwa	Makwai_Bulama_Yau	B-11_14_4_7	168
+Potiskum	Danchuwa	Babaudu	B-11_14_4_8	22
+Potiskum	Danchuwa	Garin_Bade	B-11_14_4_9	21
+Potiskum	Danchuwa	Sabon_Layi	B-11_14_4_10	42
+Potiskum	Dogo_Nini	Coca_Cola	B-11_14_5_1	39
+Potiskum	Dogo_Nini	Mai_Anguwa_Kagazau	B-11_14_5_2	85
+Potiskum	Dogo_Nini	Lamba_Muhd	B-11_14_5_3	106
+Potiskum	Dogo_Nini	Adamu_Wanzam	B-11_14_5_4	219
+Potiskum	Dogo_Nini	Saidu_Manager	B-11_14_5_5	90
+Potiskum	Dogo_Nini	Lamba_Idrissa	B-11_14_5_6	43
+Potiskum	Dogo_Nini	Yan_Shinkafa	B-11_14_5_7	72
+Potiskum	Dogo_Nini	Mai_Anguwa_Babayo	B-11_14_5_8	62
+Potiskum	Dogo_Nini	Yan_Gadaje	B-11_14_5_9	38
+Potiskum	Dogo_Nini	Haruna_Dugum	B-11_14_5_10	51
+Potiskum	Dogo_Tebo	Bayan_Cabs	B-11_14_6_1	522
+Potiskum	Dogo_Tebo	Damboa_Area	B-11_14_6_2	120
+Potiskum	Dogo_Tebo	Hassan_Damboa	B-11_14_6_3	137
+Potiskum	Dogo_Tebo	Jujin_Oc	B-11_14_6_4	55
+Potiskum	Dogo_Tebo	Lamba_Goni	B-11_14_6_5	30
+Potiskum	Dogo_Tebo	Hussaini_Damboa	B-11_14_6_6	50
+Potiskum	Dogo_Tebo	Yankuka	B-11_14_6_7	54
+Potiskum	Dogo_Tebo	Ibrahim_Chana	B-11_14_6_8	35
+Potiskum	Dogo_Tebo	Cabs	B-11_14_6_9	32
+Potiskum	Dogo_Tebo	Tinja_Tuya_Street	B-11_14_6_10	30
+Potiskum	Hausawa_Asibiti	Danjebu	B-11_14_7_1	36
+Potiskum	Hausawa_Asibiti	Bayan_Makabarta	B-11_14_7_2	98
+Potiskum	Hausawa_Asibiti	Mai_Madagali	B-11_14_7_3	75
+Potiskum	Hausawa_Asibiti	Rigiyar_Gardi	B-11_14_7_4	62
+Potiskum	Hausawa_Asibiti	Mai_Saleh	B-11_14_7_5	133
+Potiskum	Hausawa_Asibiti	Alhaji_Mato	B-11_14_7_6	22
+Potiskum	Hausawa_Asibiti	Musa_Kuku	B-11_14_7_7	49
+Potiskum	Hausawa_Asibiti	Yaro_Gambo	B-11_14_7_8	63
+Potiskum	Hausawa_Asibiti	Wakili_Audu	B-11_14_7_9	305
+Potiskum	Hausawa_Asibiti	Mai_Usman	B-11_14_7_10	30
+Potiskum	Mamudo	Unguwan_Ali	B-11_14_8_1	67
+Potiskum	Mamudo	Gumbakuku	B-11_14_8_2	55
+Potiskum	Mamudo	Marke_Chayi	B-11_14_8_3	65
+Potiskum	Mamudo	Bubaram_Bilal_Dambam	B-11_14_8_4	57
+Potiskum	Mamudo	Sandawai	B-11_14_8_5	92
+Potiskum	Mamudo	Bula_Hc	B-11_14_8_6	70
+Potiskum	Mamudo	Kama_Kirji	B-11_14_8_7	109
+Potiskum	Mamudo	Zagam	B-11_14_8_8	65
+Potiskum	Mamudo	Adaya_Pri_Sch	B-11_14_8_9	141
+Potiskum	Mamudo	Maina_Buba	B-11_14_8_10	30
+Potiskum	Ngojin_Alaraba	Tokare	B-11_14_9_1	23
+Potiskum	Ngojin_Alaraba	Mbalido	B-11_14_9_2	20
+Potiskum	Ngojin_Alaraba	Hadijam_Gubdo	B-11_14_9_3	38
+Potiskum	Ngojin_Alaraba	Garin_Dala	B-11_14_9_4	140
+Potiskum	Ngojin_Alaraba	Mai_Turare	B-11_14_9_5	20
+Potiskum	Ngojin_Alaraba	Badejo	B-11_14_9_6	118
+Potiskum	Ngojin_Alaraba	Arjali	B-11_14_9_7	34
+Potiskum	Ngojin_Alaraba	Fara_Fara_Bulama	B-11_14_9_8	77
+Potiskum	Ngojin_Alaraba	Mai_Jaarma	B-11_14_9_9	120
+Potiskum	Ngojin_Alaraba	Bulakos	B-11_14_9_10	51
+Potiskum	Yerimaram	Nasarawa_B	B-11_14_10_1	286
+Potiskum	Yerimaram	Yerimaram_Bulama_Lamba_Zubairu	B-11_14_10_2	138
+Potiskum	Yerimaram	Kabono	B-11_14_10_3	238
+Potiskum	Yerimaram	Yawachi	B-11_14_10_4	898
+Potiskum	Yerimaram	Nahuta_Babban_Layi	B-11_14_10_5	34
+Potiskum	Yerimaram	Travellers	B-11_14_10_6	250
+Potiskum	Yerimaram	Hon_Sani	B-11_14_10_7	129
+Potiskum	Yerimaram	Nahuta_Pri_School	B-11_14_10_8	307
+Potiskum	Yerimaram	Mai_Anguwa_Yakubu_33	B-11_14_10_9	148
+Potiskum	Yerimaram	Mai_Anguwa_Sale	B-11_14_10_10	36
+"""
+try:
+    TARGET_PLAN_DF = pd.read_csv(StringIO(TARGET_PLAN_DATA), sep='\t', skipinitialspace=True)
+    TARGET_PLAN_DF.columns = TARGET_PLAN_DF.columns.str.strip()
+    if 'Settlement Planned' in TARGET_PLAN_DF.columns:
+        TARGET_PLAN_DF.rename(columns={'Settlement Planned': 'Target_Plan'}, inplace=True)
+    TARGET_PLAN_DF['Target_Plan'] = pd.to_numeric(TARGET_PLAN_DF['Target_Plan'], errors='coerce').fillna(0).astype(int)
+except Exception:
+    TARGET_PLAN_DF = pd.DataFrame()
+
+
+# ---------------- LOGIN PAGE FUNCTIONS ----------------
+def show_login_page():
+    """Displays the login page at the top and handles authentication."""
+    st.markdown('<style>.stSidebar {display: none;}</style>', unsafe_allow_html=True)
+
+    st.markdown('<div class="login-container-top">', unsafe_allow_html=True)
+    st.markdown("<h1 style='color: #1E88E5;'>Welcome to Supervisors Dashboard</h1>", unsafe_allow_html=True)
+    
+    st.markdown('<div class="login-box">', unsafe_allow_html=True)
+    st.markdown("<h2 style='margin-top: 10px; color: #333;'>Cluster2 Login:</h2>", unsafe_allow_html=True)
+    st.markdown("Enter your **Ward Name** or **Admin** (case-sensitive).")
+
+    with st.form("login_form"):
+        ward_input = st.text_input(
+            "Ward Name / Username (e.g., Bare_Bari or Admin)", 
+            key="ward_input",
+        )
+        submitted = st.form_submit_button("Access Dashboard")
+
+        if submitted:
+            if ward_input in ALL_ACCESS_USERS:
+                st.session_state.authenticated_ward = ward_input
+                st.session_state.is_admin = (ward_input == ADMIN_USER)
+                st.session_state.page_view = 'dashboard'
+                st.success("✅ **Success:** Access granted! Redirecting...")
+                st.balloons()
+                st.rerun()
+            else:
+                st.error("❌ **Failed:** Invalid Ward Name or Username. Please check the spelling and casing.")
+
+    with st.expander("❓ View Available Ward Logins"):
+        st.code(", ".join(sorted(list(ALLOWED_WARDS))), language="markdown")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ---------------- DATA LOADER ----------------
+@st.cache_data(show_spinner="Downloading and processing latest KoboToolbox data...", ttl=600)
+def load_data(force_refresh=False):
+    """Load the latest data from the server."""
+    if force_refresh:
+        st.cache_data.clear()
+
     try:
-        response = requests.get(DATA_URL, timeout=60)
+        response = requests.get(DATA_URL, timeout=300)
         response.raise_for_status()
         excel_file = BytesIO(response.content)
         data_dict = pd.read_excel(excel_file, sheet_name=None)
 
-        df_mortality = data_dict[MAIN_SHEET]
-        df_females = data_dict[FEMALES_SHEET]
-        df_preg = data_dict[PREG_SHEET] 
+        df_mortality = data_dict.get(MAIN_SHEET, pd.DataFrame())
+        df_females = data_dict.get(FEMALES_SHEET, pd.DataFrame())
+        df_preg = data_dict.get(PREG_SHEET, pd.DataFrame())
 
-        # Ensure proper datetime for filtering
         if "start" in df_mortality.columns:
             df_mortality["start"] = pd.to_datetime(df_mortality["start"], errors='coerce')
 
+        COMMUNITY_COL_RAW = find_column_with_suffix(df_mortality, "community")
+        
+        if COMMUNITY_COL_RAW in df_mortality.columns and SOP_COMMUNITY_MAP:
+             df_mortality[COMMUNITY_COL_RAW] = df_mortality[COMMUNITY_COL_RAW].astype(str).map(
+                 lambda x: SOP_COMMUNITY_MAP.get(x, x)
+             )
+            
         return df_mortality, df_females, df_preg
+
     except Exception as e:
-        st.error(f"❌ Error loading workbook: {e}") 
+        st.error(f"❌ Error loading workbook: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-# ---------------- HELPER ----------------
+# ---------------- HELPER FUNCTIONS ----------------
 def find_column_with_suffix(df, keyword):
-    """Return first column name containing keyword (case-insensitive), or None."""
-    if df is None:
+    if df is None or df.empty:
         return None
     for col in df.columns:
         if keyword.lower() in col.lower():
             return col
     return None
 
-# ---------------- QC ENGINE (Functionality unchanged) ----------------
 def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
-    # Find important columns (may return None if not found)
+    """
+    Generate QC dataframe with error detection.
+    CRITICAL: Duplicate household detection now ONLY considers records that are 'Approved' or 'On Hold',
+    excluding 'Not Approved' records entirely from duplication logic.
+    """
+    # Dynamic column finding
     outcome_col = find_column_with_suffix(df_preg_history, "Was the baby born alive")
-    still_alive_col = find_column_with_suffix(df_preg_history, "still alive")  # Q124
+    still_alive_col = find_column_with_suffix(df_preg_history, "still alive")
     boys_dead_col = find_column_with_suffix(df_females, "boys have died")
     girls_dead_col = find_column_with_suffix(df_females, "daughters have died")
     c_alive_col = find_column_with_suffix(df_females, "c_alive")
     c_dead_col = find_column_with_suffix(df_females, "c_dead")
     miscarriage_col = find_column_with_suffix(df_females, "misscarraige")
+    
+    UNIQUE_CODE_COL = find_column_with_suffix(df_mortality, "unique_code") or 'unique_code_col_not_found'
+    VALIDATION_COL = '_validation_status'
+    
+    # Handle missing columns in sub-tables by creating dummy columns
+    female_cols = {
+        'c_alive_col': c_alive_col, 'c_dead_col': c_dead_col, 'miscarriage_col': miscarriage_col,
+        'boys_dead_col': boys_dead_col, 'girls_dead_col': girls_dead_col
+    }
+    for name, col in female_cols.items():
+        if col is None or col not in df_females.columns:
+            dummy_col = f'_{name}_dummy'
+            df_females[dummy_col] = 0
+            female_cols[name] = dummy_col
+    c_alive_col, c_dead_col, miscarriage_col, boys_dead_col, girls_dead_col = female_cols.values()
 
-    # Defensive: if some female-level cols are missing, create dummy numeric columns to avoid crashes
-    for col in [c_alive_col, c_dead_col, miscarriage_col, boys_dead_col, girls_dead_col]:
-        if col not in df_females.columns:
-            df_females[col] = 0
-            if col is None:
-                pass
+    # --- CRITICAL FIX: Household, Mother, and Child Duplicate Check ONLY for Approved/On Hold ---
+    # Filter out "Not Approved" records BEFORE checking for duplicates
+    if VALIDATION_COL in df_mortality.columns:
+        df_mortality_for_dupe_check = df_mortality[df_mortality[VALIDATION_COL] != "Not Approved"].copy()
+        # Get the list of approved/on-hold submission UUIDs
+        approved_uuids = df_mortality_for_dupe_check['_uuid'].unique()
+    else:
+        # If validation column doesn't exist, use all records
+        df_mortality_for_dupe_check = df_mortality.copy()
+        approved_uuids = df_mortality['_uuid'].unique()
+    
+    # Check household duplicates (already filtered)
+    if UNIQUE_CODE_COL in df_mortality_for_dupe_check.columns:
+        mortality_dupes = df_mortality_for_dupe_check[df_mortality_for_dupe_check.duplicated(subset=UNIQUE_CODE_COL, keep=False)]
+    else:
+        mortality_dupes = pd.DataFrame()
+    
+    # Filter females and pregnancy history to ONLY include approved/on-hold records
+    df_females_for_dupe_check = df_females[df_females['_submission__uuid'].isin(approved_uuids)]
+    df_preg_for_dupe_check = df_preg_history[df_preg_history['_submission__uuid'].isin(approved_uuids)]
+    
+    # Check mother and child duplicates (now filtered to exclude "Not Approved")
+    females_dupes = df_females_for_dupe_check[df_females_for_dupe_check.duplicated(subset="mother_id", keep=False)]
+    preg_dupes = df_preg_for_dupe_check[df_preg_for_dupe_check.duplicated(subset="child_id", keep=False)]
 
-    # Aggregate females per household
+    dupe_household_uuids = mortality_dupes['_uuid'].unique()
+    dupe_mother_uuids = females_dupes['_submission__uuid'].unique()
+    dupe_child_uuids = preg_dupes['_submission__uuid'].unique()
+        
+    # Aggregate female-level data
     females_agg = df_females.groupby('_submission__uuid').agg({
-        c_alive_col: 'sum',
-        c_dead_col: 'sum',
-        miscarriage_col: 'sum',
-        boys_dead_col: 'sum',
-        girls_dead_col: 'sum'
+        c_alive_col: 'sum', c_dead_col: 'sum', miscarriage_col: 'sum',
+        boys_dead_col: 'sum', girls_dead_col: 'sum'
     }).reset_index()
     females_agg['total_children_died'] = females_agg[boys_dead_col].fillna(0) + females_agg[girls_dead_col].fillna(0)
 
-    # Pregnancy-level aggregation
+    # Aggregate pregnancy history data
     preg = df_preg_history.copy()
     if outcome_col not in preg.columns:
         preg['_outcome_dummy'] = np.nan
@@ -199,25 +483,35 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
     preg_counts = preg.groupby('_submission__uuid').apply(per_submission_agg).reset_index()
     merged = females_agg.merge(preg_counts, on="_submission__uuid", how="left").fillna(0)
 
-    # QC logic
     qc_rows = []
     for _, row in merged.iterrows():
         errors = []
-        if c_alive_col and c_alive_col in row and int(row[c_alive_col]) != int(row['Born_Alive']):
+        uuid = row['_submission__uuid']
+        
+        # Internal Consistency Errors
+        if c_alive_col and int(row[c_alive_col]) != int(row['Born_Alive']):
             errors.append("Born Alive mismatch")
-        if miscarriage_col and miscarriage_col in row and int(row[miscarriage_col]) != int(row['Miscarriage_Abortion']):
+        if miscarriage_col and int(row[miscarriage_col]) != int(row['Miscarriage_Abortion']):
             errors.append("Miscarrage mismatch")
-        if c_dead_col and c_dead_col in row and int(row[c_dead_col]) != int(row['Later_Died']):
+        if c_dead_col and int(row[c_dead_col]) != int(row['Later_Died']):
             errors.append("Born Alive but Later Died mismatch")
+            
+        # Duplication Errors (now ONLY includes Approved/On Hold duplicates)
+        if uuid in dupe_household_uuids:
+            errors.append("Duplicate Household")
+        if uuid in dupe_mother_uuids:
+            errors.append("Duplicate Mother")
+        if uuid in dupe_child_uuids:
+            errors.append("Duplicate Child")
+            
         qc_rows.append({
-            "_submission__uuid": row['_submission__uuid'],
+            "_submission__uuid": uuid,
             "QC_Issues": "; ".join(errors) if errors else "No Errors",
             "Total_Flags": len(errors)
         })
 
     qc_df = pd.DataFrame(qc_rows)
 
-    # Map enumerator
     ra_col = find_column_with_suffix(df_mortality, "Type in your Name")
     if ra_col and ra_col in df_mortality.columns:
         qc_df = qc_df.merge(
@@ -230,33 +524,79 @@ def generate_qc_dataframe(df_mortality, df_females, df_preg_history):
         qc_df["Research_Assistant"] = np.nan
 
     qc_df.drop(columns=["_uuid"], inplace=True, errors='ignore')
-    qc_df["Error_Percentage"] = (qc_df["Total_Flags"] / 4) * 100
+    qc_df["Error_Percentage"] = (qc_df["Total_Flags"] / 6) * 100 
     return qc_df
 
-# ---------------- MAIN DASHBOARD FUNCTION ----------------
-
-# Helper function for consistent QC Metric display (per user request)
 def display_qc_metric(col_obj, label, value):
-    """Displays a QC metric with '✅' if value = 0, or '🚫' and red text if value > 0."""
     icon = "✅" if value == 0 else "🚫"
-    color = "#333333" if value == 0 else "#D32F2F" # Dark text for good, Red for error
-    
-    # Use HTML to display the icon, label, and value clearly
+    color = "#333333" if value == 0 else "#D32F2F"
     col_obj.markdown(
         f"""
-        <p class="custom-metric-label">
-            {icon} {label}
-        </p>
+        <p class="custom-metric-label">{icon} {label}</p>
         <h4 class="custom-metric-value" style="color: {color};">{value:,}</h4>
-        """, 
+        """,
         unsafe_allow_html=True
     )
 
-def run_dashboard():
-    # Increment usage count
+def generate_coverage_scorecard(df_mortality_full, df_mortality_for_metrics, target_plan_df, ward_col, community_col, unique_code_col, validation_col):
+    """Generate a Community Coverage Scorecard comparing target plans with actual submissions."""
+    
+    if target_plan_df.empty or community_col not in df_mortality_full.columns or ward_col not in df_mortality_full.columns:
+        return pd.DataFrame()
+    
+    target_plan_df = target_plan_df.copy()
+    target_plan_df['ward'] = target_plan_df['ward'].str.strip()
+    target_plan_df['community'] = target_plan_df['community'].str.strip()
+    
+    scorecard_rows = []
+    
+    for _, target_row in target_plan_df.iterrows():
+        ward_name = target_row['ward']
+        community_name = target_row['community']
+        target_plan = int(target_row.get('Target_Plan', 0))
+        
+        community_data_full = df_mortality_full[
+            (df_mortality_full[ward_col] == ward_name) & 
+            (df_mortality_full[community_col] == community_name)
+        ]
+        
+        total_submissions = len(community_data_full)
+        
+        community_data_approved = df_mortality_for_metrics[
+            (df_mortality_for_metrics[ward_col] == ward_name) & 
+            (df_mortality_for_metrics[community_col] == community_name)
+        ]
+        approved_count = len(community_data_approved)
+        
+        if validation_col in community_data_full.columns:
+            not_approved_count = (community_data_full[validation_col] == "Not Approved").sum()
+        else:
+            not_approved_count = 0
+        
+        outstanding = max(0, target_plan - approved_count)
+        
+        scorecard_rows.append({
+            'Ward': ward_name,
+            'Community': community_name,
+            'Target Plan': target_plan,
+            'Total Submissions': total_submissions,
+            'Approved Record': approved_count,
+            'Not Approved': not_approved_count,
+            'Outstanding': outstanding
+        })
+    
+    scorecard_df = pd.DataFrame(scorecard_rows)
+    scorecard_df = scorecard_df.sort_values(by=['Ward', 'Community']).reset_index(drop=True)
+    
+    return scorecard_df
+
+# ---------------- DASHBOARD LOGIC ----------------
+def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admin):
+    
     st.session_state.usage_count += 1
     
-    # --- USAGE COUNTER BAR (Green) ---
+    st.markdown('<style>.stSidebar {display: block;}</style>', unsafe_allow_html=True)
+    
     st.markdown(
         f"""
         <div class="usage-bar-container">
@@ -267,209 +607,344 @@ def run_dashboard():
         """,
         unsafe_allow_html=True
     )
-    # --------------------------------
-
-    df_mortality, df_females, df_preg = load_data()
-    if df_females.empty or df_mortality.empty or df_preg.empty:
-        st.stop()
-
-    # Filters
-    LGA_COL = "Confirm your LGA"
-    WARD_COL = "Confirm your ward"
-    COMMUNITY_COL = "Confirm your community"
-    RA_COL = "Type in your Name"
-    DATE_COL = "start"
-
-    # --- Improved Sidebar Layout (UX) ---
-    with st.sidebar:
-        st.header("Data Filters") 
-        st.markdown("---")
+    
+    # --- FILTER DATA FOR THE AUTHENTICATED WARD ---
+    WARD_COL = find_column_with_suffix(df_mortality, "ward") or "Confirm your ward"
+    
+    if not is_admin and WARD_COL in df_mortality.columns:
+        df_mortality = df_mortality[df_mortality[WARD_COL] == authenticated_ward].copy()
         
-        # Define filter function (unchanged)
+        submission_uuids = df_mortality['_uuid'].unique()
+        df_females = df_females[df_females['_submission__uuid'].isin(submission_uuids)].copy()
+        df_preg = df_preg[df_preg['_submission__uuid'].isin(submission_uuids)].copy()
+        
+        st.success(f"✅ Access granted. Displaying data for **{authenticated_ward}** Ward only.")
+        
+    elif is_admin:
+        st.warning("👑 **Super Admin Mode:** Displaying **ALL WARDS** data.")
+    else:
+        st.error(f"❌ Error: Ward column ('{WARD_COL}') not found in the mortality data. Cannot apply necessary filters.")
+        return 
+
+    if df_females.empty or df_mortality.empty or df_preg.empty:
+        st.warning(f"No data available for the current selection.")
+        return 
+
+    # ---------------- DYNAMIC COLUMN MAPPING ----------------
+    LGA_COL = find_column_with_suffix(df_mortality, "lga") or "Confirm your LGA"
+    COMMUNITY_COL = find_column_with_suffix(df_mortality, "community") or "Confirm your community" 
+    RA_COL = find_column_with_suffix(df_mortality, "name") or "Type in your Name"
+    DATE_COL = "start"
+    VALIDATION_COL = "_validation_status"
+    UNIQUE_CODE_COL_RAW = find_column_with_suffix(df_mortality, "unique_code") or find_column_with_suffix(df_mortality, "unique") or 'unique_code' 
+    CONSENT_DATE_COL_RAW = find_column_with_suffix(df_mortality, "consent_date") or DATE_COL
+    
+    # ------------------ COLUMN DISPLAY NAMES ---------------------
+    COMMUNITY_DISPLAY_NAME = "Confirm your community"
+    LGA_DISPLAY_NAME = "LGA" 
+    WARD_DISPLAY_NAME = "Ward" 
+    RA_DISPLAY_NAME = "Enumerator Name"
+    UNIQUE_CODE_DISPLAY_NAME = "unique_code" 
+
+    # --- Sidebar Filters ---
+    with st.sidebar:
+        st.header(f"Data Filters for {authenticated_ward}")
+        st.caption(f"LGA: `{LGA_COL}` | RA: `{RA_COL}` | Unique ID Col: `{UNIQUE_CODE_COL_RAW}`")
+        st.markdown("---")
+
+        lga_filter_ok = LGA_COL in df_mortality.columns
+        ward_filter_ok = WARD_COL in df_mortality.columns
+        community_filter_ok = COMMUNITY_COL in df_mortality.columns
+        ra_filter_ok = RA_COL in df_mortality.columns
+        
         def apply_filters(df):
-            selected_lga = st.selectbox("LGA", ["All"] + sorted(df[LGA_COL].dropna().unique()))
-            if selected_lga != "All":
-                df = df[df[LGA_COL] == selected_lga]
-            ward_options = ["All"] + sorted(df[WARD_COL].dropna().unique())
-            selected_ward = st.selectbox("Ward", ward_options)
-            if selected_ward != "All":
-                df = df[df[WARD_COL] == selected_ward]
-            community_options = ["All"] + sorted(df[COMMUNITY_COL].dropna().unique())
-            selected_community = st.selectbox("Community", community_options)
-            if selected_community != "All":
-                df = df[df[COMMUNITY_COL] == selected_community]
-            ra_options = ["All"] + sorted(df[RA_COL].dropna().unique())
-            selected_ra = st.selectbox("Research Assistant", ra_options) # Renamed for clarity
-            if selected_ra != "All":
-                df = df[df[RA_COL] == selected_ra]
-            unique_dates = ["All"] + sorted(df[DATE_COL].dropna().dt.date.unique())
-            selected_date = st.selectbox("Collection Date", unique_dates) # Renamed for brevity
-            if selected_date != "All":
-                df = df[df[DATE_COL].dt.date == selected_date]
-            return df
+            df_filtered = df.copy()
+            
+            if ward_filter_ok:
+                ward_options = sorted(df_filtered[WARD_COL].dropna().unique())
+                if is_admin:
+                    selected_ward = st.selectbox("Ward", ["All Wards"] + ward_options, index=0)
+                    if selected_ward != "All Wards":
+                        df_filtered = df_filtered[df_filtered[WARD_COL] == selected_ward]
+                else:
+                    st.info(f"🔒 Ward filter is fixed to **{authenticated_ward}**")
+            
+            if lga_filter_ok and df_filtered[LGA_COL].nunique() > 1:
+                selected_lga = st.selectbox("LGA", ["All"] + sorted(df_filtered[LGA_COL].dropna().unique()))
+                if selected_lga != "All":
+                    df_filtered = df_filtered[df_filtered[LGA_COL] == selected_lga]
+            
+            if community_filter_ok:
+                selected_community = st.selectbox(COMMUNITY_DISPLAY_NAME, ["All"] + sorted(df_filtered[COMMUNITY_COL].dropna().unique()))
+                if selected_community != "All":
+                    df_filtered = df_filtered[df_filtered[COMMUNITY_COL] == selected_community]
 
-        # Apply filters
+            if ra_filter_ok:
+                selected_ra = st.selectbox("Research Assistant", ["All"] + sorted(df_filtered[RA_COL].dropna().unique()))
+                if selected_ra != "All":
+                    df_filtered = df_filtered[df_filtered[RA_COL] == selected_ra]
+
+            if DATE_COL in df_filtered.columns:
+                try:
+                    df_filtered[DATE_COL] = pd.to_datetime(df_filtered[DATE_COL], errors='coerce')
+                    unique_dates = ["All"] + sorted(df_filtered[DATE_COL].dropna().dt.date.unique())
+                    selected_date = st.selectbox("Collection Date", unique_dates)
+                    if selected_date != "All":
+                        df_filtered = df_filtered[df_filtered[DATE_COL].dt.date == selected_date]
+                except Exception:
+                    pass
+            return df_filtered
+
+        df_mortality_original = df_mortality.copy()
+        
         filtered_final = apply_filters(df_mortality)
-    # --- End Sidebar ---
+        
+        if VALIDATION_COL in filtered_final.columns:
+            df_for_metrics = filtered_final[filtered_final[VALIDATION_COL] != "Not Approved"].copy()
+            df_for_metrics[VALIDATION_COL].fillna("Validation Ongoing", inplace=True)
+        else:
+            df_for_metrics = filtered_final.copy()
 
+        st.markdown("---")
+        if st.button("🚪 Logout"):
+            st.session_state.authenticated_ward = None
+            st.session_state.is_admin = False
+            st.session_state.page_view = 'login'
+            st.rerun()
 
-    submission_ids = filtered_final['_uuid'].unique()
+        if st.button("🔄 Force Refresh Data"):
+            st.session_state.refresh = True
+            st.rerun()
+
+    submission_ids = df_for_metrics['_uuid'].unique()
     filtered_females = df_females[df_females['_submission__uuid'].isin(submission_ids)]
     filtered_preg = df_preg[df_preg['_submission__uuid'].isin(submission_ids)]
-    df_qc = generate_qc_dataframe(df_mortality, df_females, df_preg)
-    filtered_df = df_qc[df_qc['_submission__uuid'].isin(filtered_final['_uuid'])]
 
+    # Generate QC data
+    df_qc = generate_qc_dataframe(df_mortality, df_females, df_preg) 
+    filtered_df = df_qc[df_qc['_submission__uuid'].isin(df_for_metrics['_uuid'])]
 
-    # --- Improved Header and Operational Metrics (KPI CARDS) ---
-    # The title is styled via the CSS class .big-title, which now uses the pure black color
-    st.markdown('<div class="big-title">SARMAAN II - QC Dashboard</div>', unsafe_allow_html=True)
+    # --- Dashboard Title & Metrics ---
+    dashboard_title = f"SARMAAN II - QC Dashboard - {authenticated_ward} {'(Admin)' if is_admin else 'Ward'}"
+    st.markdown(f'<div class="big-title">{dashboard_title}</div>', unsafe_allow_html=True)
     st.caption("Data Quality Control and Monitoring")
-    
-    st.subheader("🎯 Operational Metrics")
-    
-    with st.container(border=True): # Container for visual grouping
-        cols = st.columns(4)
-        cols[0].metric("Total Households Reached", f"{filtered_final['_uuid'].nunique():,}", help="Unique household submissions.")
-        cols[1].metric("Active Enumerators", filtered_final[RA_COL].nunique(), help="Number of RAs who submitted data for the current filter.")
-        cols[2].metric("Wards Reached", filtered_final[WARD_COL].nunique(), help="Unique wards covered.")
-        cols[3].metric("Communities Reached", filtered_final[COMMUNITY_COL].nunique(), help="Unique communities covered.")
-    
-    # ----------------------------------------------------
 
-    # ----------------------------------------------------
-    st.subheader("🚨 Quality Control Summary")
-    
-    with st.container(border=True):
+    st.subheader("🎯 Operational Metrics")
+    with st.container():
+        cols = st.columns(4)
+        cols[0].metric("Total Households Reached", f"{df_for_metrics['_uuid'].nunique():,}")
+        
+        ra_col_for_metric = RA_COL if RA_COL in df_for_metrics.columns else None
+        ward_col_for_metric = WARD_COL if WARD_COL in df_for_metrics.columns else None
+        community_col_for_metric = COMMUNITY_COL if COMMUNITY_COL in df_for_metrics.columns else None
+
+        cols[1].metric("Active Enumerators", df_for_metrics[ra_col_for_metric].nunique() if ra_col_for_metric else 0)
+        cols[2].metric("Wards Reached", df_for_metrics[ward_col_for_metric].nunique() if ward_col_for_metric else 0)
+        cols[3].metric("Communities Reached", df_for_metrics[community_col_for_metric].nunique() if community_col_for_metric else 0)
+
+
+    # ---------------- QC Summary ----------------
+    st.subheader("🚨 Quality Control Summary (Metrics exclude 'Not Approved')")
+    with st.container():
         cols = st.columns(6)
         
-        # Duplicates (Now using custom display_qc_metric)
-        duplicate_household = filtered_final.duplicated(subset="unique_code").sum()
-        duplicate_mother = filtered_females.duplicated(subset="mother_id").sum()
-        duplicate_child = filtered_preg.duplicated(subset="child_id").sum()
-        
-        # QC Mismatch Metrics 
         born_alive_mismatch = (filtered_df["QC_Issues"].str.contains("Born Alive mismatch")).sum()
         later_died_mismatch = (filtered_df["QC_Issues"].str.contains("Born Alive but Later Died mismatch")).sum()
         miscarriage_mismatch = (filtered_df["QC_Issues"].str.contains("Miscarrage mismatch")).sum()
-
-        # Apply the consistent metric display to all 6
-        display_qc_metric(cols[0], "Duplicate Household", duplicate_household)
-        display_qc_metric(cols[1], "Duplicate Mother", duplicate_mother)
-        display_qc_metric(cols[2], "Duplicate Child", duplicate_child)
+        
+        display_qc_metric(cols[0], "Duplicate Household", (filtered_df["QC_Issues"].str.contains("Duplicate Household")).sum())
+        display_qc_metric(cols[1], "Duplicate Mother", (filtered_df["QC_Issues"].str.contains("Duplicate Mother")).sum())
+        display_qc_metric(cols[2], "Duplicate Child", (filtered_df["QC_Issues"].str.contains("Duplicate Child")).sum())
         display_qc_metric(cols[3], "Born Alive Mismatch", born_alive_mismatch)
         display_qc_metric(cols[4], "B.Alive, Later Died Mismatch", later_died_mismatch)
         display_qc_metric(cols[5], "Miscarriage Mismatch", miscarriage_mismatch)
-    
+
+    # ---------------- Community Coverage Scorecard ----------------
     st.markdown("---")
-    # ----------------------------------------------------
-
-
-    st.subheader("📈 QC Errors by Enumerator")
+    st.subheader("📊 Community Coverage Scorecard (Target Plan vs. Submissions)")
     
+    if not TARGET_PLAN_DF.empty:
+        coverage_scorecard = generate_coverage_scorecard(
+            df_mortality_original,
+            df_for_metrics,
+            TARGET_PLAN_DF,
+            WARD_COL,
+            COMMUNITY_COL,
+            UNIQUE_CODE_COL_RAW,
+            VALIDATION_COL
+        )
+        
+        if not coverage_scorecard.empty:
+            if not is_admin:
+                coverage_scorecard = coverage_scorecard[coverage_scorecard['Ward'] == authenticated_ward].copy()
+            
+            if not coverage_scorecard.empty:
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Total Target Plan", f"{coverage_scorecard['Target Plan'].sum():,}")
+                col2.metric("Total Approved", f"{coverage_scorecard['Approved Record'].sum():,}")
+                col3.metric("Total Outstanding", f"{coverage_scorecard['Outstanding'].sum():,}")
+                completion_rate = (coverage_scorecard['Approved Record'].sum() / coverage_scorecard['Target Plan'].sum() * 100) if coverage_scorecard['Target Plan'].sum() > 0 else 0
+                col4.metric("Completion Rate", f"{completion_rate:.1f}%")
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                def highlight_coverage(row):
+                    colors = []
+                    for col in row.index:
+                        if col == 'Target Plan' and row['Approved Record'] == row['Target Plan'] and row['Target Plan'] > 0:
+                            colors.append('background-color: #c8e6c9')
+                        elif col == 'Approved Record' and row['Approved Record'] == row['Target Plan'] and row['Target Plan'] > 0:
+                            colors.append('background-color: #c8e6c9')
+                        elif col == 'Outstanding' and row['Outstanding'] > 0:
+                            colors.append('background-color: #ffebee')
+                        else:
+                            colors.append('')
+                    return colors
+                
+                st.dataframe(
+                    coverage_scorecard.style.apply(highlight_coverage, axis=1),
+                    use_container_width=True,
+                    height=400
+                )
+            else:
+                st.info(f"📋 No coverage scorecard data available for **{authenticated_ward}** ward.")
+            
+        else:
+            st.info("📋 No coverage scorecard data available for the current selection.")
+    else:
+        st.warning("⚠️ Target plan data not loaded. Cannot generate coverage scorecard.")
+
+    # ---------------- Errors by Enumerator ----------------
+    st.markdown("---")
+    st.subheader("📈 QC Errors by Enumerator (Excluding 'Not Approved')")
     error_by_ra = filtered_df.groupby("Research_Assistant")['Total_Flags'].sum().reset_index()
     error_by_ra = error_by_ra.sort_values(by='Total_Flags', ascending=False)
-    
     st.bar_chart(
-        error_by_ra.set_index("Research_Assistant"), 
-        use_container_width=True, 
-        color="#D32F2F" # Error color (kept red for errors/flags)
-    )
-
-    st.subheader("📋 Detailed Error Records")
-    
-    # Create flags for duplicates
-    display_df = filtered_df.copy()
-    
-    dupe_df = filtered_final[['_uuid', LGA_COL, WARD_COL, COMMUNITY_COL]].rename(columns={'_uuid': '_submission__uuid'})
-    display_df = display_df.merge(dupe_df, on="_submission__uuid", how="left")
-    
-    # Recalculate duplicates markers for display (keeping original functionality)
-    unique_codes = filtered_final["unique_code"].value_counts()
-    duplicate_codes = unique_codes[unique_codes > 1].index
-    mother_ids = filtered_females["mother_id"].value_counts()
-    duplicate_mothers = mother_ids[mother_ids > 1].index
-    child_ids = filtered_preg["child_id"].value_counts()
-    duplicate_children = child_ids[child_ids > 1].index
-    
-    display_df['Duplicate_Household'] = display_df['_submission__uuid'].apply(
-        lambda x: '🚨' if filtered_final[filtered_final['_uuid'] == x]['unique_code'].iloc[0] in duplicate_codes else ''
-    )
-    display_df['Duplicate_Mother'] = display_df['_submission__uuid'].apply(
-        lambda x: '🚨' if any(filtered_females[filtered_females['_submission__uuid'] == x]['mother_id'].isin(duplicate_mothers)) else ''
-    )
-    display_df['Duplicate_Child'] = display_df['_submission__uuid'].apply(
-        lambda x: '🚨' if any(filtered_preg[filtered_preg['_submission__uuid'] == x]['child_id'].isin(duplicate_children)) else ''
-    )
-
-    # Keep only rows with errors or duplicates
-    display_df = display_df[
-        (display_df["Total_Flags"] > 0) |
-        (display_df['Duplicate_Household'] != '') |
-        (display_df['Duplicate_Mother'] != '') |
-        (display_df['Duplicate_Child'] != '')
-    ].copy()
-
-    # ---------------- CONDITIONAL FORMATTING ----------------
-    def highlight_errors(val):
-        """Highlights the QC Issues column."""
-        if val != "No Errors":
-            return 'background-color: #ffe0e6; color: #cc0033; font-weight: bold;'  # Soft pink background, dark red text
-        return ''
-
-    def highlight_flag_count(val):
-        """Highlights the Total_Flags column."""
-        if val > 0:
-            return 'background-color: #ffcccc; font-weight: bold;' # Brighter red for the count
-        return ''
-    
-    def highlight_percentage(val):
-        """Highlights the Error_Percentage column."""
-        if val > 0:
-            return 'background-color: #ffcccc; font-weight: bold;'
-        return ''
-        
-    def format_percentage(val):
-        """Formats the percentage column."""
-        return f'{val:.1f}%' if pd.notna(val) else ''
-
-    # Clean up column names for display
-    display_df.rename(columns={
-        LGA_COL: 'LGA',
-        WARD_COL: 'Ward',
-        COMMUNITY_COL: 'Community',
-        'Total_Flags': 'Total Flags',
-        'Error_Percentage': 'Error %',
-        '_submission__uuid': 'Submission UUID'
-    }, inplace=True)
-    
-    # Apply styling
-    styled_df = display_df[
-        ['Research_Assistant', 'LGA', 'Ward', 'Community', 'Submission UUID', 'QC_Issues', 'Total Flags', 'Error %', 'Duplicate_Household', 'Duplicate_Mother', 'Duplicate_Child']
-    ].style \
-    .applymap(highlight_errors, subset=['QC_Issues']) \
-    .applymap(highlight_flag_count, subset=['Total Flags']) \
-    .applymap(highlight_percentage, subset=['Error %']) \
-    .format({'Error %': format_percentage})
-
-    st.dataframe(
-        styled_df,
+        error_by_ra.set_index("Research_Assistant"),
         use_container_width=True,
-        height=500
+        color="#D32F2F"
     )
 
-    st.success("✅ QC Dashboard Updated")
+    # ---------------- DUPLICATE HOUSEHOLD RECORDS (FIXED) ----------------
+    st.subheader("🏠 Duplicate Household Submissions (Only Approved/On Hold)")
+    st.caption("⚠️ Note: 'Not Approved' records are excluded from duplicate detection")
+    
+    if UNIQUE_CODE_COL_RAW in df_for_metrics.columns:
+        # CRITICAL: Use df_for_metrics which already excludes "Not Approved"
+        dupe_mask = df_for_metrics.duplicated(subset=UNIQUE_CODE_COL_RAW, keep=False)
+        duplicate_households = df_for_metrics[dupe_mask].sort_values(by=UNIQUE_CODE_COL_RAW).copy()
+
+        if not duplicate_households.empty:
+            display_dupe_cols = [
+                '_uuid', UNIQUE_CODE_COL_RAW, RA_COL, LGA_COL, WARD_COL, 
+                COMMUNITY_COL, DATE_COL, VALIDATION_COL
+            ]
+            display_dupe_cols = [col for col in display_dupe_cols if col in duplicate_households.columns]
+            
+            display_dupe_df = duplicate_households[display_dupe_cols].rename(columns={
+                '_uuid': 'Submission UUID',
+                UNIQUE_CODE_COL_RAW: UNIQUE_CODE_DISPLAY_NAME, 
+                RA_COL: RA_DISPLAY_NAME,
+                LGA_COL: LGA_DISPLAY_NAME,
+                WARD_COL: WARD_DISPLAY_NAME,
+                COMMUNITY_COL: COMMUNITY_DISPLAY_NAME,
+                DATE_COL: 'Submission Date',
+                VALIDATION_COL: 'Validation Status'
+            })
+            
+            if 'Submission Date' in display_dupe_df.columns:
+                 display_dupe_df['Submission Date'] = pd.to_datetime(
+                     display_dupe_df['Submission Date'], errors='coerce'
+                 ).dt.strftime('%Y-%m-%d %H:%M')
+                 
+            st.dataframe(display_dupe_df, use_container_width=True, height=300)
+            st.warning(f"❗ **{len(display_dupe_df):,}** submissions share the same **{UNIQUE_CODE_DISPLAY_NAME}** (excluding 'Not Approved'). They should be reviewed.")
+        else:
+            st.info("✅ No duplicate household submissions found in Approved/On Hold records.")
+    else:
+        st.error(f"❌ Cannot check for household duplicates. Unique Code column ('{UNIQUE_CODE_COL_RAW}') not found.")
 
 
-# ---------------- FORCE REFRESH BUTTON (Moved to sidebar for UX) ----------------
-with st.sidebar:
+    # ---------------- Detailed Error Records ----------------
     st.markdown("---")
-    if st.button("🔄 Force Refresh Data", help="Clears cache and reloads all data from KoBo Toolbox."):
-        st.cache_data.clear()
-        st.session_state.refresh = True
+    st.subheader("📋 Detailed Internal/Cross-Check Error Records (Excluding 'Not Approved')")
+    display_df = filtered_df[filtered_df['Total_Flags'] > 0].copy()
+    
+    dupe_cols = ['_uuid', UNIQUE_CODE_COL_RAW, CONSENT_DATE_COL_RAW, VALIDATION_COL, LGA_COL, WARD_COL, COMMUNITY_COL, RA_COL]
+    present_dupe_cols = [col for col in dupe_cols if col in df_for_metrics.columns]
+    dupe_df = df_for_metrics[present_dupe_cols].rename(columns={'_uuid': '_submission__uuid'}).copy()
+    
+    if RA_COL in dupe_df.columns:
+        dupe_df.rename(columns={RA_COL: 'Research_Assistant_Merge'}, inplace=True)
 
-if st.session_state.refresh:
-    st.session_state.refresh = False
-    st.rerun() 
-else:
+    if CONSENT_DATE_COL_RAW in dupe_df.columns and pd.api.types.is_datetime64_any_dtype(dupe_df[CONSENT_DATE_COL_RAW]):
+        dupe_df[CONSENT_DATE_COL_RAW] = dupe_df[CONSENT_DATE_COL_RAW].dt.strftime('%Y-%m-%d')
+        
+    display_df = display_df.merge(dupe_df, on="_submission__uuid", how="left")
+    display_df.drop(columns=["Research_Assistant_Merge"], inplace=True, errors='ignore')
 
-    run_dashboard()
+    display_df.rename(columns={
+        LGA_COL: LGA_DISPLAY_NAME, 
+        WARD_COL: WARD_DISPLAY_NAME, 
+        COMMUNITY_COL: COMMUNITY_DISPLAY_NAME,
+        'Total_Flags': 'Total Flags', 
+        'Error_Percentage': 'Error %', 
+        '_submission__uuid': 'Submission UUID',
+        UNIQUE_CODE_COL_RAW: UNIQUE_CODE_DISPLAY_NAME, 
+        CONSENT_DATE_COL_RAW: 'Date of Consent',
+        VALIDATION_COL: 'Validation Status', 
+        'Research_Assistant': RA_DISPLAY_NAME 
+    }, inplace=True)
+
+    display_cols = [
+        'Submission UUID', 
+        UNIQUE_CODE_DISPLAY_NAME, 
+        RA_DISPLAY_NAME, 
+        'Total Flags', 
+        'Error %', 
+        'QC_Issues', 
+        LGA_DISPLAY_NAME, 
+        WARD_DISPLAY_NAME, 
+        COMMUNITY_DISPLAY_NAME, 
+        'Date of Consent', 
+        'Validation Status'
+    ]
+    display_cols = [col for col in display_cols if col in display_df.columns]
+
+    if not display_df.empty:
+        st.dataframe(display_df[display_cols], use_container_width=True, height=500)
+    else:
+        st.info("🎉 No internal or cross-check errors found in the current filtered data.")
+
+
+# ---------------- MAIN APP LOGIC ----------------
+if st.session_state.page_view == 'login':
+    # If not authenticated, show the login page
+    show_login_page()
+
+elif st.session_state.page_view == 'dashboard':
+    # If authenticated, load data and show the dashboard
+    force_refresh_flag = st.session_state.get('refresh', False)
+
+    # Check if data exists in cache or needs a refresh
+    if 'df_mortality' not in st.session_state or force_refresh_flag:
+        # Load full data first (Admin or Ward User gets the same full dataset from the web)
+        df_mortality, df_females, df_preg = load_data(force_refresh=force_refresh_flag)
+        st.session_state.df_mortality = df_mortality
+        st.session_state.df_females = df_females
+        st.session_state.df_preg = df_preg
+    else:
+        df_mortality = st.session_state.df_mortality
+        df_females = st.session_state.df_females
+        df_preg = st.session_state.df_preg
+        
+    st.session_state.refresh = False  # Reset the flag after check
+
+    # Run dashboard with the authenticated user's context
+    run_dashboard(
+    df_mortality, 
+    df_females, 
+    df_preg, 
+    st.session_state.authenticated_ward,
+    st.session_state.is_admin
+)
