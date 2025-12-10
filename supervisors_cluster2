@@ -948,7 +948,3 @@ elif st.session_state.page_view == 'dashboard':
     st.session_state.authenticated_ward,
     st.session_state.is_admin
 )
-
-
-
-
