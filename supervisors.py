@@ -72,7 +72,7 @@ st.markdown(
 # --- END: Custom CSS ---
 
 # ---------------- DATA SOURCE ----------------
-DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/esK39EhRdJ3yz4wXMsKrJiC/data.xlsx"
+DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/aMaahuu5VANkY6o4QyQ8uC/export-settings/eskrSsschnVuLb8uHgnAkTR/data.xlsx"
 MAIN_SHEET = "mortality_pilot_cluster_two-..."
 FEMALES_SHEET = "female"
 PREG_SHEET = "pregnancy_history"
