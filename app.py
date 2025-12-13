@@ -71,11 +71,13 @@ st.markdown(
 )
 # --- END: Custom CSS ---
 
+# ---------------- DATA SOURCE ----------------
 # ---------------- DATA SOURCE & AUTH CONFIG ----------------
 DATA_URL = "https://kf.kobotoolbox.org/api/v2/assets/abHEibtwS6VnYHZHgupcLR/export-settings/ess8MPrkqEkXBjasMU7mPeL/data.xlsx"
 MAIN_SHEET = "mortality_pilot_cluster_one-..."
 FEMALES_SHEET = "female"
 PREG_SHEET = "pregnancy_history"
+
 
 # --- AUTHENTICATION LOGIC ---
 ADMIN_USER = 'Admin'
@@ -914,6 +916,83 @@ def run_dashboard(df_mortality, df_females, df_preg, authenticated_ward, is_admi
         st.dataframe(display_df[display_cols], use_container_width=True, height=500)
     else:
         st.info("🎉 No internal or cross-check errors found in the current filtered data.")
+
+    # ---------------- Validation Comments/Justification Records ----------------
+    st.markdown("---")
+    st.subheader("💬 Records with Validation Comments/Justification (Not Approved / On Hold)")
+    st.caption("📅 Showing records from December 11, 2025 onwards | Excluding 'Approved' records")
+    
+    # Find the validation comment column - check both in df_for_metrics and df_mortality_original
+    VALIDATION_COMMENT_COL = find_column_with_suffix(df_mortality_original, "Validation Comment") or find_column_with_suffix(df_mortality_original, "Justification")
+    
+    if VALIDATION_COMMENT_COL and VALIDATION_COMMENT_COL in df_mortality_original.columns:
+        # Start with the original filtered data (respects ward filtering)
+        df_comments_base = filtered_final.copy()
+        
+        # Filter 1: Only records with non-empty validation comments
+        df_with_comments = df_comments_base[
+            df_comments_base[VALIDATION_COMMENT_COL].notna() & 
+            (df_comments_base[VALIDATION_COMMENT_COL].astype(str).str.strip() != '')
+        ].copy()
+        
+        # Filter 2: Exclude 'Approved' records - only show 'Not Approved' or 'On Hold'
+        if VALIDATION_COL in df_with_comments.columns:
+            df_with_comments = df_with_comments[
+                (df_with_comments[VALIDATION_COL] == "Not Approved") | 
+                (df_with_comments[VALIDATION_COL] == "On Hold")
+            ].copy()
+        
+        # Filter 3: Only records from December 11, 2025 onwards
+        if DATE_COL in df_with_comments.columns:
+            df_with_comments[DATE_COL] = pd.to_datetime(df_with_comments[DATE_COL], errors='coerce')
+            cutoff_date = pd.to_datetime('2025-12-11')
+            df_with_comments = df_with_comments[df_with_comments[DATE_COL] >= cutoff_date].copy()
+        
+        if not df_with_comments.empty:
+            # Select relevant columns for display
+            comment_display_cols = [
+                '_uuid', UNIQUE_CODE_COL_RAW, RA_COL, LGA_COL, WARD_COL, 
+                COMMUNITY_COL, VALIDATION_COL, VALIDATION_COMMENT_COL, DATE_COL
+            ]
+            comment_display_cols = [col for col in comment_display_cols if col in df_with_comments.columns]
+            
+            df_comments_display = df_with_comments[comment_display_cols].copy()
+            
+            # Format date column if it exists
+            if DATE_COL in df_comments_display.columns and pd.api.types.is_datetime64_any_dtype(df_comments_display[DATE_COL]):
+                df_comments_display[DATE_COL] = df_comments_display[DATE_COL].dt.strftime('%Y-%m-%d %H:%M')
+            
+            # Rename columns for better display
+            rename_dict = {
+                '_uuid': 'Submission UUID',
+                UNIQUE_CODE_COL_RAW: UNIQUE_CODE_DISPLAY_NAME,
+                RA_COL: RA_DISPLAY_NAME,
+                LGA_COL: LGA_DISPLAY_NAME,
+                WARD_COL: WARD_DISPLAY_NAME,
+                COMMUNITY_COL: COMMUNITY_DISPLAY_NAME,
+                VALIDATION_COL: 'Validation Status',
+                VALIDATION_COMMENT_COL: 'Validation Comment/Justification',
+                DATE_COL: 'Submission Date'
+            }
+            df_comments_display.rename(columns=rename_dict, inplace=True)
+            
+            # Display metrics
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Records with Comments", f"{len(df_comments_display):,}")
+            if 'Validation Status' in df_comments_display.columns:
+                not_approved_count = (df_comments_display['Validation Status'] == 'Not Approved').sum()
+                on_hold_count = (df_comments_display['Validation Status'] == 'On Hold').sum()
+                col2.metric("Not Approved", f"{not_approved_count:,}")
+                col3.metric("On Hold", f"{on_hold_count:,}")
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            # Display the table
+            st.dataframe(df_comments_display, use_container_width=True, height=400)
+        else:
+            st.info("ℹ️ No records found with validation comments or justifications that match the criteria (Not Approved/On Hold, from Dec 11, 2025 onwards).")
+    else:
+        st.warning("⚠️ Validation Comment/Justification column not found in the dataset.")
 
 
 # ---------------- MAIN APP LOGIC ----------------
